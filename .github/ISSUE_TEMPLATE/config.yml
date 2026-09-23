@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Setup guide
+    url: https://ozancs.github.io/oznlab-sensor/
+    about: Every step has a "You should see" and an "If not" list. Most answers are there.

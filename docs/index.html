@@ -1,0 +1,1263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OznLab Sensor Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..125,500..900&family=Caveat:wght@600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+  /* palette: graphite ground, copper (the coil), PCB blue (the boards) */
+  :root {
+    --bg:#fbfbfa; --surface:#ffffff; --ink:#15191c; --muted:#5b646b; --line:#dfe3e5; --soft:#f0f2f3;
+    --copper:#c35a22; --copper-2:#e07a3c; --pcb:#1f4f9e; --pcb-soft:#e3ebf8;
+    --ok:#1b8a4b; --bad:#c3372c; --warn:#b7791f;
+    --code:#f0f2f3; --term:#16191c; --term-ink:#cfe0d6; --term-dim:#7d8e86;
+    --tile:#e9eef1; --shadow:0 1px 2px rgba(18,23,27,.06), 0 8px 24px -12px rgba(18,23,27,.18);
+    --f-display:"Archivo", "Arial Narrow", "Segoe UI", system-ui, sans-serif; --f-hand:"Caveat", "Segoe Print", "Bradley Hand", cursive;
+    --f-body:"IBM Plex Sans", -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --f-mono:"IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --accent: var(--copper); --fg: var(--ink);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#0d1114; --surface:#141a1e; --ink:#e3e8eb; --muted:#8f9aa2; --line:#243037; --soft:#1b2328;
+      --copper:#ee8a51; --copper-2:#f4a877; --pcb:#78a4f2; --pcb-soft:#16233a;
+      --ok:#3fbf73; --bad:#f06a5f; --warn:#e0a64a;
+      --code:#1a2227; --term:#080b0d; --tile:#182025; --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
+    }
+  }
+  :root[data-theme="dark"] {
+      --bg:#0d1114; --surface:#141a1e; --ink:#e3e8eb; --muted:#8f9aa2; --line:#243037; --soft:#1b2328;
+      --copper:#ee8a51; --copper-2:#f4a877; --pcb:#78a4f2; --pcb-soft:#16233a;
+      --ok:#3fbf73; --bad:#f06a5f; --warn:#e0a64a;
+      --code:#1a2227; --term:#080b0d; --tile:#182025; --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-padding-top: 96px; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:18px/1.62 var(--f-body); -webkit-font-smoothing: antialiased; }
+  main { max-width: 920px; margin: 0 auto; padding: 0 20px 72px; }
+  @media (max-width: 520px) { main { padding: 0 16px 56px; } body { font-size: 17px; } }
+  h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; }
+  h2 { font-size: clamp(2rem, 5vw, 2.8rem); line-height: 1.05; margin: 8px 0 16px; font-weight: 800; font-stretch: 112%; letter-spacing: -0.01em;
+       display: flex; align-items: baseline; gap: 14px; }
+  h2 .num { font: 500 .5em/1 var(--f-mono); color: var(--copper); border: 1.5px solid currentColor; border-radius: 3px; padding: 4px 6px 3px; position: relative; top: -.35em; }
+  h3 { font-size: 1.4rem; margin: 30px 0 8px; font-weight: 700; font-stretch: 106%; }
+  p { margin: 10px 0; }
+  ol, ul { padding-left: 22px; } li { margin: 6px 0; }
+  a { color: var(--copper); }
+  code { background: var(--code); padding: 1px 5px; border-radius: 3px; font: 0.88em/1.5 var(--f-mono); }
+  pre { background: var(--code); padding: 15px 17px; border-radius: 4px; overflow-x: auto; margin: 0; font: 0.9em/1.65 var(--f-mono); }
+  pre code { background: none; padding: 0; font-size: 1em; }
+  small { color: var(--muted); }
+  :focus-visible { outline: 2px solid var(--copper); outline-offset: 2px; }
+  ::selection { background: color-mix(in srgb, var(--copper) 28%, transparent); }
+
+  /* ---- top bar ---- */
+  .topbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: color-mix(in srgb, var(--bg) 92%, transparent);
+            backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); margin: 0 -20px 30px; padding: 12px 20px 0; border-bottom: 1px solid var(--line); }
+  @media (max-width: 520px) { .topbar { margin: 0 -16px 24px; padding: 10px 16px 0; } }
+  .brand { display: flex; align-items: center; gap: 10px; font: 800 1.2rem/1 var(--f-display); font-stretch: 112%; }
+  .brand svg { width: 24px; height: 24px; color: var(--copper); flex: none; }
+  .brand small { font: 400 .92rem/1 var(--f-body); color: var(--muted); }
+  .steps { display: flex; overflow-x: auto; scrollbar-width: none; margin-top: 6px; }
+  .steps::-webkit-scrollbar { display: none; }
+  .steps button { flex: 0 0 auto; display: flex; align-items: baseline; gap: 6px; background: none; border: 0; border-bottom: 2px solid transparent;
+           padding: 11px 14px 12px; cursor: pointer; color: var(--muted); font: 500 1rem/1 var(--f-body); white-space: nowrap; }
+  .steps button:first-child { padding-left: 0; }
+  .steps .n { font: 500 .85rem/1 var(--f-mono); }
+  .steps button:hover { color: var(--ink); }
+  .steps button.seen .n { color: var(--copper); }
+  .steps button.on { color: var(--ink); border-bottom-color: var(--copper); }
+  .steps button.on .n { color: var(--copper); }
+  @media (max-width: 640px) { .steps .t { display: none; } .steps button.on .t { display: inline; } .steps button { padding: 9px 10px 10px; } }
+
+  .panel[hidden], .sub[hidden] { display: none; }
+  .sub { animation: rise .2s ease-out; }
+  @keyframes rise { from { opacity: .5; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .sub { animation: none; } }
+  .intro { font-size: 1.12rem; color: var(--muted); max-width: 60ch; }
+
+  /* ---- hero ---- */
+  .hero { display: grid; grid-template-columns: 1fr 1.08fr; gap: 26px; align-items: center; margin: 10px 0 18px; }
+  @media (max-width: 720px) { .hero { grid-template-columns: 1fr; gap: 6px; } }
+  .wordmark { font: 900 clamp(2.9rem, 8.5vw, 4.6rem)/.92 var(--f-display); font-stretch: 118%; letter-spacing: -0.025em; margin: 6px 0 10px; color: var(--ink); }
+  .thesis { font: 600 2rem/1.1 var(--f-hand); color: var(--copper); margin: 0 0 12px; transform: rotate(-1.5deg); transform-origin: left; }
+  .hero-text > p:not(.thesis):not(.cta) { color: var(--muted); max-width: 44ch; font-size: 1.06rem; }
+  .cta { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 20px !important; }
+  .btn { font: 600 1.08rem/1 var(--f-body); padding: 15px 22px; border-radius: 4px; cursor: pointer; border: 1px solid var(--ink);
+         background: var(--ink); color: var(--bg); transition: transform .12s; }
+  .btn:hover { transform: translateY(-1px); }
+  .btn.primary { background: var(--copper); border-color: var(--copper); color: #fff; }
+  .link { background: none; border: 0; padding: 4px 0; font: inherit; color: var(--ink); cursor: pointer; text-decoration: underline; text-decoration-color: var(--copper); text-underline-offset: 4px; text-decoration-thickness: 1.5px; }
+  .plot { margin: 0; }
+  .plot canvas { width: 100%; max-width: 100%; height: auto; aspect-ratio: 720 / 380; display: block; }
+  .plot figcaption { font-size: .9rem; margin-top: 2px; }
+
+  /* ---- what it does: a spec list, not cards ---- */
+  .does { border-top: 2px solid var(--ink); margin-top: 10px; }
+  .does-head { font: 600 .95rem/1 var(--f-body); color: var(--muted); padding: 18px 0 8px; }
+  .row { display: grid; grid-template-columns: 200px 1fr auto; gap: 18px; align-items: baseline; width: 100%; text-align: left;
+         background: none; border: 0; border-bottom: 1px solid var(--line); padding: 15px 0; font: inherit; color: inherit; cursor: pointer; }
+  .row b { font: 700 1.15rem/1.3 var(--f-display); font-stretch: 106%; }
+  .row span { color: var(--muted); font-size: 1rem; line-height: 1.45; }
+  .row code { background: none; padding: 0; color: var(--muted); font-size: .84rem; }
+  .row:hover b { color: var(--copper); }
+  .row:hover code { color: var(--copper); }
+  @media (max-width: 640px) { .row { grid-template-columns: 1fr; gap: 2px; } .row code { margin-top: 4px; } }
+
+  /* ---- sub steps ---- */
+  .subnav { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 0 0 24px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+  .subnav button { font: 500 1rem/1.2 var(--f-body); padding: 6px 0; cursor: pointer; border: 0; background: none; color: var(--muted); }
+  .subnav button:hover { color: var(--ink); }
+  .subnav button.seen { color: var(--ink); }
+  .subnav button.seen::after { content: " \2713"; color: var(--ok); font-size: .85em; }
+  .subnav button.on { color: var(--copper); font-weight: 600; box-shadow: inset 0 -2px 0 var(--copper); }
+  .sub h3 { margin-top: 6px; font-size: 1.75rem; font-weight: 800; font-stretch: 110%; }
+  .gain { font-size: 1.1rem; margin: 0 0 14px; color: var(--muted); }
+  .gain-k { font: 600 1.55rem/1 var(--f-hand); color: var(--copper); margin-right: 4px; }
+  .lbl { font: 600 1.02rem/1 var(--f-body); margin: 24px 0 8px; color: var(--ink); }
+  .lbl.run { color: var(--copper); } .lbl.ok { color: var(--ok); } .lbl.bad { color: var(--bad); } .lbl.use { color: var(--ink); }
+  .need { border-left: 3px solid var(--line); padding: 2px 0 2px 14px; margin: 12px 0; color: var(--muted); }
+  .need b { color: var(--ink); }
+  pre.out { background: var(--term); color: var(--term-ink); margin: 0 0 6px; border-radius: 4px; }
+  .fix td:first-child { width: 42%; }
+  .fix td:first-child code { white-space: normal; }
+
+  /* ---- code copy ---- */
+  .cb { position: relative; margin: 8px 0 14px; }
+  .cb pre { padding-right: 90px; }
+  .where { font-size: .9rem; color: var(--muted); margin: 16px 0 -4px; }
+  .copy { position: absolute; top: 8px; right: 8px; display: inline-flex; align-items: center; gap: 6px; font: 500 .86rem/1 var(--f-body);
+          padding: 8px 11px; border-radius: 3px; cursor: pointer; border: 1px solid var(--line); background: var(--surface); color: var(--muted); }
+  .copy:hover { color: var(--ink); border-color: var(--muted); }
+  .copy svg { width: 15px; height: 15px; }
+  .copy.done { color: var(--ok); border-color: var(--ok); }
+
+  /* ---- tables, notes, misc ---- */
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 0.97em; }
+  th, td { text-align: left; padding: 9px 10px 9px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: .88em; border-bottom-color: var(--ink); }
+  .tw { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 12px 0; }
+  .tw table { margin: 0; min-width: 100%; }
+  .note { background: color-mix(in srgb, var(--copper) 8%, var(--bg)); padding: 11px 14px; border-radius: 4px; margin: 16px 0; font-size: .96rem; }
+  .warn { background: color-mix(in srgb, var(--bad) 9%, var(--bg)); }
+  figure { margin: 16px 0; } figure img { max-width: 100%; border-radius: 4px; border: 1px solid var(--line); background:#fff; }
+  figcaption { color: var(--muted); font-size: 0.88em; margin-top: 6px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; } @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+  .dim { color: var(--muted); font-size: 0.92em; font-variant-numeric: tabular-nums; }
+  .pill { display:inline-block; padding: 1px 8px; border-radius: 3px; font: 500 .82rem/1.5 var(--f-mono); white-space:nowrap; vertical-align: middle; border: 1px solid currentColor; }
+  .pill.ok { color:var(--ok); } .pill.warn { color:var(--warn); }
+  .check { list-style: none; padding: 0; }
+  .check li { padding-left: 28px; position: relative; }
+  .check li::before { content: ""; position: absolute; left: 1px; top: 6px; width: 13px; height: 13px; border: 1.5px solid var(--ink); border-radius: 2px; }
+  .route { padding-left: 24px; }
+  .route li::marker { font: 500 .85em var(--f-mono); color: var(--copper); }
+
+  .nav { display: flex; justify-content: space-between; gap: 10px; margin-top: 36px; padding-top: 18px; border-top: 1px solid var(--line); }
+  .nav button { font: 600 1.05rem/1.2 var(--f-body); padding: 15px 20px; border-radius: 4px; cursor: pointer; border: 1px solid var(--line); background: none; color: var(--ink); }
+  .nav button.next { background: var(--ink); border-color: var(--ink); color: var(--bg); margin-left: auto; text-align: right; }
+  .nav button.next:hover { background: var(--copper); border-color: var(--copper); color: #fff; }
+  .nav button:disabled { visibility: hidden; }
+  footer { margin-top: 48px; color: var(--muted); font-size: .92rem; }
+
+  /* ---- 3D viewers ---- */
+  .v3d { position: relative; width: 100%; max-width: 100%; aspect-ratio: 4 / 3; border-radius: 4px; overflow: hidden; background: var(--tile); }
+  .v3d img, .v3d canvas { width: 100%; height: 100%; object-fit: contain; display: block; background: none; border: 0; border-radius: 0; max-width: none; }
+  .v3d.trying img { opacity: 0; }
+  .v3d img { transition: opacity .25s; }
+  .v3d .btns { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 6px; opacity: 0; transition: opacity .15s; }
+  .v3d:hover .btns, .v3d:focus-within .btns { opacity: 1; }
+  .v3d .btns button { font: inherit; font-size: .78em; padding: 3px 9px; border-radius: 3px; cursor: pointer;
+         border: 1px solid rgba(127,127,127,.35); background: rgba(127,127,127,.15); color: inherit; backdrop-filter: blur(6px); }
+  .v3d .why { position: absolute; left: 8px; right: 8px; bottom: 8px; font-size: .76em; line-height: 1.35;
+        padding: 6px 9px; border-radius: 4px; background: rgba(127,127,127,.18); color: var(--muted); backdrop-filter: blur(6px); }
+
+  /* ---- wiring diagram ---- */
+  .wire { margin: 22px 0 8px; }
+  .wire .wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; text-align: center; }
+  .wire svg { width: 100%; min-width: 660px; height: auto; }
+  .wire .wrap, .wire .wrap svg { cursor: zoom-in; }
+  .wire .hint { font-size: .8em; color: var(--muted); text-align: center; margin: 6px 0 0; }
+  .wire figcaption { max-width: 640px; margin: 12px auto 0; }
+  dialog.zoom { border: 0; padding: 0; background: var(--bg); color: var(--ink); border-radius: 6px; max-width: 96vw; max-height: 94vh; overflow: auto; cursor: zoom-out; }
+  dialog.zoom::backdrop { background: rgba(0,0,0,.72); }
+  dialog.zoom svg { display: block; width: min(1500px, 94vw); min-width: 0; height: auto; }
+
+  /* ---- media slots ---- */
+  .media { margin: 14px 0; }
+  .media img, .media video { width: 100%; border-radius: 4px; display: block; background: var(--tile); }
+  .media .ph { border: 1.5px dashed var(--line); border-radius: 4px; padding: 24px 14px; text-align: center; color: var(--muted); font: .82em var(--f-mono); }
+  .media .ph b { display: block; color: var(--ink); margin-bottom: 4px; font: 600 1.35rem/1.1 var(--f-hand); }
+</style>
+</head>
+<body>
+<main>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="3.5"/><circle cx="12" cy="12" r="0.8" fill="currentColor"/></svg>
+    OznLab Sensor <small>setup guide</small>
+  </div>
+  <nav class="steps" aria-label="Steps"></nav>
+</header>
+
+<!-- ============================== 1 START ============================== -->
+<section class="panel" data-title="Start">
+<div class="hero">
+  <div class="hero-text">
+    <h1 class="wordmark">OznLab Sensor</h1>
+    <p class="thesis">Your hotend, measured.</p>
+    <p>A small eddy current coil looks at the hotend heatsink. It feels the nozzle touch the bed and the melt pushing through the nozzle, a few microns at a time, and turns that into a Z offset, pressure advance and a clog watch on every print.</p>
+    <p class="cta"><button class="btn primary" type="button" data-go="2.1">Start the setup &#8594;</button> <button class="link" type="button" data-go="6.1">or jump to the tools</button></p>
+  </div>
+  <figure class="plot" aria-label="Sketch of the coil signal over time: a sharp spike when the nozzle touches the bed, a smooth rise while melt pressure builds, and a short spike from a knock.">
+    <canvas id="scope" width="720" height="380"></canvas>
+    <figcaption>What the coil sees. A sketch, not a real capture.</figcaption>
+  </figure>
+</div>
+
+<h3>What it does</h3>
+<div class="does">
+  <div class="does-head">On every print, by itself</div>
+  <button class="row" type="button" data-go="4.4"><b>Z offset</b><span>The nozzle taps the bed before the print. No paper, no baby stepping.</span><code>OZNLAB_TAP</code></button>
+  <button class="row" type="button" data-go="4.5"><b>Pressure advance</b><span>Measured from the melt at print start, for whatever filament is loaded.</span><code>OZNLAB_CALIBRATE_PA</code></button>
+  <button class="row" type="button" data-go="5.1"><b>Clog and runout</b><span>Follows the melt pressure while printing and can pause when it goes wrong.</span><code>OZNLAB_MONITOR</code></button>
+  <div class="does-head">When you ask for it</div>
+  <button class="row" type="button" data-go="6.1"><b>Max flow</b><span>The real mm&#179;/s limit of your hotend with this filament.</span><code>OZNLAB_MAX_FLOW</code></button>
+  <button class="row" type="button" data-go="6.2"><b>Retraction</b><span>The shortest retraction that takes the pressure off the nozzle.</span><code>OZNLAB_RETRACT_TEST</code></button>
+  <button class="row" type="button" data-go="6.3"><b>Temperature</b><span>Where more heat stops helping the flow.</span><code>OZNLAB_TEMP_SCAN</code></button>
+  <button class="row" type="button" data-go="6.4"><b>Crash watch</b><span>Notices when the nozzle hits a curled part. Experimental.</span><code>OZNLAB_CRASH</code></button>
+  <button class="row" type="button" data-go="6.5"><b>Nozzle bed mesh</b><span>A bed mesh measured by the nozzle itself, no probe needed.</span><code>OZNLAB_MESH</code></button>
+  <button class="row" type="button" data-go="6.6"><b>Nozzle Z homing</b><span>Home Z on the bed with the nozzle, no endstop needed.</span><code>OZNLAB_HOME_TEST</code></button>
+</div>
+
+<h3>What you need</h3>
+<ul class="check">
+  <li>The two boards: coil PCB and main PCB (assembled), plus two thin wires for the coil.</li>
+  <li>A toolhead board with an I2C header. Tested on BTT EBB36 / EBB42 v1.1 and v1.2.</li>
+  <li>A soldering iron for the JP1 address jumper and the coil wires.</li>
+  <li>Klipper v0.13.0 or newer with Mainsail or Fluidd, and SSH access to the printer's computer. Z homing with the nozzle (optional) needs a Klipper from late May 2026 or newer, on the Pi and on the toolhead board.</li>
+</ul>
+
+<h3>The route</h3>
+<ol class="route">
+  <li><span><b>Hardware</b>: solder, mount and wire the two boards.</span></li>
+  <li><span><b>Install</b>: copy the module, paste the config.</span></li>
+  <li><span><b>Setup</b>: six short checks from the console.</span></li>
+  <li><span><b>Print start</b>: two blocks for your PRINT_START and PRINT_END.</span></li>
+  <li><span><b>Tools</b>: max flow, retraction, temperature, crash watch, nozzle mesh and homing.</span></li>
+</ol>
+<p><small>Every step says what to do, what you should see, and what to try if you don't. In this folder: <code>oznlab_sensor.py</code> (the module), <code>oznlab_sensor_config.cfg</code> (every option, commented), and <code>img/</code>, <code>video/</code>, <code>model/</code> for this page.</small></p>
+</section>
+
+<!-- ============================== 2 HARDWARE ============================== -->
+<section class="panel" data-title="Hardware" hidden>
+<h2><span class="num">2</span>Hardware</h2>
+
+<section class="sub" data-title="The boards">
+<h3>2.1 The boards</h3>
+<div class="grid">
+<figure>
+  <div class="v3d" data-model="model/coil.glb"><img src="img/coil_pcb.png" alt="Coil PCB"></div>
+  <figcaption><b>Coil PCB</b>, two pads (A, B)<br>
+  <span class="dim">14.87 &#215; 12.07 mm &#183; 0.8 mm thick</span></figcaption>
+</figure>
+<figure>
+  <div class="v3d" data-model="model/main.glb"><img src="img/main_pcb.png" alt="Main PCB"></div>
+  <figcaption><b>Main PCB</b>, LDC1612, 4-pin header, coil input<br>
+  <span class="dim">15.96 &#215; 18.46 mm &#183; 1.6 mm thick</span></figcaption>
+</figure>
+</div>
+<p><small>Drag to rotate. The 3D view needs the <code>model/</code> folder next to this file and a web server; opened straight from disk you see the picture instead.</small></p>
+</section>
+
+<section class="sub" data-title="JP1 address" hidden>
+<h3>2.2 Solder the address jumper (JP1)</h3>
+<div class="note warn">JP1 must be soldered. Left open, the sensor does not answer.</div>
+<p>The sensor can use address <b>2A</b> or <b>2B</b>. Bridge the centre pad of JP1 to one of them with a blob of solder.</p>
+<ul>
+  <li><b>With a BTT Eddy</b> on the same bus: choose <b>2B</b>.</li>
+  <li><b>With another I2C module</b> on the bus: look up its address and choose the pad that does not conflict with it.</li>
+  <li><b>Nothing else</b> on the bus: either one works. 2B matches the config in this guide.</li>
+</ul>
+<div class="tw"><table>
+<tr><th>JP1</th><th>in the config (step 3.2)</th></tr>
+<tr><td>2A</td><td><code>i2c_address: 42</code></td></tr>
+<tr><td>2B</td><td><code>i2c_address: 43</code></td></tr>
+</table></div>
+<figure class="media" data-src="img/jp1_bridged.jpg"><figcaption>JP1 bridged to 2B.</figcaption></figure>
+</section>
+
+<section class="sub" data-title="Coil cable" hidden>
+<h3>2.3 Coil cable</h3>
+<p>Solder two wires from the coil pads to <b>A</b> and <b>B</b> on the main PCB. Either way round. Make them long enough to reach, and as short as practical.</p>
+<figure class="media" data-src="img/coil_cable.jpg"><figcaption>Coil PCB wired to A and B on the main PCB.</figcaption></figure>
+</section>
+
+<section class="sub" data-title="Mount the coil" hidden>
+<h3>2.4 Mount the coil</h3>
+<p>Mount the coil PCB facing the hotend's aluminium heatsink, close to it but not touching. The coil must not move or vibrate; glue it if needed.</p>
+<figure class="media" data-src="img/coil_mount.jpg"><figcaption>Coil facing the heatsink.</figcaption></figure>
+<figure class="media" data-src="video/coil_mount.mp4" data-kind="video"><figcaption>Mounting the coil, step by step.</figcaption></figure>
+<p><small>You check this for real in step 4.3: pushing the nozzle up must show up in the console.</small></p>
+</section>
+
+<section class="sub" data-title="Toolhead board" hidden>
+<h3>2.5 Connect to the toolhead board</h3>
+<p>Fix the main PCB on the toolhead with the two M2 holes. Then four wires, SCL, SDA, GND and 5V, from the main PCB to the I2C header of the toolhead board.</p>
+
+<figure class="wire">
+<div class="wrap">
+<svg viewBox="0 0 796 500" role="img"
+     aria-label="Wiring: two wires from the coil pads A and B to the matching holes on the bottom of the main PCB, then four wires from the main PCB header - SCL, SDA, GND, VIN - to the toolhead board I2C connector, whose pin order is plus 5 volts, ground, SCL, SDA. A callout shows the JP1 address jumper on the main PCB: the centre pad is soldered to 2A or 2B.">
+  <g fill="none" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M51.0 323.0 H16 V446 H398.7 V324.4" stroke="currentColor" opacity=".7"/>
+    <path d="M51.0 352.3 H6 V462 H431.8 V324.4" stroke="currentColor" opacity=".7"/>
+    <path d="M449.8 126.4 V40 H606 V150 H648" stroke="#e05a4a"/>
+    <path d="M416.3 126.4 V58 H592 V192 H648" stroke="#9aa0a8"/>
+    <path d="M349.2 126.4 V76 H578 V234 H648" stroke="#e0a83a"/>
+    <path d="M382.8 126.4 V94 H564 V276 H648" stroke="#4aa8e0"/>
+  </g>
+  <image href="img/coil_pcb.png" x="26" y="250" width="205" height="173.7"/>
+  <image href="img/main_pcb.png" x="300" y="100" width="228" height="255.8"/>
+  <rect x="622" y="124" width="150" height="182" rx="9" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  <text x="697" y="114" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">toolhead board</text>
+  <text x="697" y="324" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".75">EBB36 v1.2 shown</text>
+  <text x="697" y="340" text-anchor="middle" font-size="10" fill="currentColor" opacity=".6">check your own board's</text>
+  <text x="697" y="353" text-anchor="middle" font-size="10" fill="currentColor" opacity=".6">SCL / SDA / GND / 5 V pins</text>
+  <circle cx="648" cy="150" r="5" fill="#e05a4a" stroke="var(--bg)" stroke-width="1.5"/>
+  <text x="661" y="154" font-size="11" fill="currentColor">1 &#183; +5 V</text>
+  <circle cx="648" cy="192" r="5" fill="#9aa0a8" stroke="var(--bg)" stroke-width="1.5"/>
+  <text x="661" y="196" font-size="11" fill="currentColor">2 &#183; GND</text>
+  <circle cx="648" cy="234" r="5" fill="#e0a83a" stroke="var(--bg)" stroke-width="1.5"/>
+  <text x="661" y="238" font-size="11" fill="currentColor">3 &#183; PB3 SCL</text>
+  <circle cx="648" cy="276" r="5" fill="#4aa8e0" stroke="var(--bg)" stroke-width="1.5"/>
+  <text x="661" y="280" font-size="11" fill="currentColor">4 &#183; PB4 SDA</text>
+  <circle cx="349.2" cy="126.4" r="4.5" fill="#e0a83a" stroke="var(--bg)" stroke-width="1.5"/>
+  <circle cx="382.8" cy="126.4" r="4.5" fill="#4aa8e0" stroke="var(--bg)" stroke-width="1.5"/>
+  <circle cx="416.3" cy="126.4" r="4.5" fill="#9aa0a8" stroke="var(--bg)" stroke-width="1.5"/>
+  <circle cx="449.8" cy="126.4" r="4.5" fill="#e05a4a" stroke="var(--bg)" stroke-width="1.5"/>
+  <circle cx="51.0" cy="323.0" r="4" fill="currentColor" stroke="var(--bg)" stroke-width="1.4"/>
+  <circle cx="51.0" cy="352.3" r="4" fill="currentColor" stroke="var(--bg)" stroke-width="1.4"/>
+  <circle cx="398.7" cy="324.4" r="4" fill="currentColor" stroke="var(--bg)" stroke-width="1.4"/>
+  <circle cx="431.8" cy="324.4" r="4" fill="currentColor" stroke="var(--bg)" stroke-width="1.4"/>
+  <text x="456.8" y="35" font-size="11" font-weight="600" fill="#e05a4a">VIN</text>
+  <text x="423.3" y="53" font-size="11" font-weight="600" fill="#9aa0a8">GND</text>
+  <text x="356.2" y="71" font-size="11" font-weight="600" fill="#e0a83a">SCL</text>
+  <text x="389.8" y="89" font-size="11" font-weight="600" fill="#4aa8e0">SDA</text>
+  <text x="26" y="480" font-size="11" fill="currentColor" opacity=".75">coil cable: as short as practical &#183; A and B either way round</text>
+  <text x="128.5" y="245" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Coil PCB</text>
+  <text x="414.0" y="376" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Main PCB</text>
+  <g class="jp1">
+    <path d="M286 174 C 322 200, 324 238, 344 246" fill="none" stroke="var(--accent)" stroke-width="1.8"/>
+    <rect x="344.9" y="235" width="35.1" height="21" rx="5" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    <rect x="20" y="18" width="266" height="210" rx="10" fill="var(--tile)" stroke="var(--accent)" stroke-width="1.4"/>
+    <text x="36" y="42" font-size="12" font-weight="600" fill="currentColor">JP1: address jumper</text>
+    <rect x="103" y="56" width="86" height="58" rx="15" fill="#c3c8d0"/>
+    <rect x="66" y="62" width="28" height="46" rx="3" fill="#d9a441"/>
+    <rect x="110" y="62" width="28" height="46" rx="3" fill="#d9a441"/>
+    <rect x="154" y="62" width="28" height="46" rx="3" fill="#d9a441"/>
+    <text x="80" y="126" text-anchor="middle" font-size="11" font-weight="600" fill="currentColor">2A</text>
+    <text x="168" y="126" text-anchor="middle" font-size="11" font-weight="600" fill="currentColor">2B</text>
+    <text x="198" y="84" font-size="10" fill="currentColor" opacity=".65">solder</text>
+    <path d="M196 80 L182 72" stroke="currentColor" stroke-width="1" opacity=".45" fill="none"/>
+    <text x="36" y="146" font-size="10.5" fill="currentColor" opacity=".9">Solder the centre pad to <tspan font-weight="600">2A</tspan> or <tspan font-weight="600">2B</tspan>.</text>
+    <text x="36" y="161" font-size="10.5" fill="currentColor" opacity=".72">With a BTT Eddy on the same bus: <tspan font-weight="600">2B</tspan>.</text>
+    <text x="36" y="176" font-size="10.5" fill="currentColor" opacity=".72">2B = i2c_address: 43, 2A = 42.</text>
+    <text x="36" y="191" font-size="10.5" fill="currentColor" opacity=".72">Left open, the sensor does not answer.</text>
+    <text x="36" y="213" font-size="10.5" font-weight="600" fill="var(--accent)">Details in step 2.2.</text>
+  </g>
+</svg>
+</div>
+<p class="hint">click the diagram to enlarge</p>
+<figcaption>The four wires do not run straight across: the main PCB header reads SCL, SDA, GND, VIN from left to right, the EBB36 I2C connector reads +5V, GND, SCL, SDA. Follow the colours, not the positions.</figcaption>
+</figure>
+
+<div class="tw"><table>
+<tr><th>Board</th><th></th><th>I2C header</th><th><code>i2c_bus</code></th></tr>
+<tr><td><b>EBB36 / EBB42 CAN v1.1, v1.2</b></td><td><span class="pill ok">tested</span></td><td>1 = +5V<br>2 = GND<br>3 = PB3 (SCL)<br>4 = PB4 (SDA)</td><td><code>i2c3_PB3_PB4</code></td></tr>
+<tr><td><b>EBB36 / EBB42 GEN2</b></td><td><span class="pill warn">not tested</span></td><td>5V, GND, PA7 (SCL), PA6 (SDA)</td><td><code>i2c3_PA7_PA6</code><br><small>toolhead firmware from Aug 2025 or newer</small></td></tr>
+<tr><td><b>EBB36 / EBB42 CAN v1.0</b></td><td><span class="pill warn">not tested</span></td><td>5V, GND, PB6 (SCL), PB7 (SDA)</td><td><code>i2c1_PB6_PB7</code></td></tr>
+</table></div>
+<p>On v1.1 / v1.2, PB3 and PB4 are also the filament sensor pins, so do not define a filament sensor on them.</p>
+<p><b>Other boards:</b> connect SCL, SDA, 5V and GND to the board's I2C pins and set <code>i2c_mcu</code> / <code>i2c_bus</code> for those pins. Step 4.1 tells you if it answers.</p>
+<p><b>With a BTT Eddy:</b> connect both to the same header in parallel (SCL to SCL, SDA to SDA, GND to GND, 5V to 5V).</p>
+<figure class="media" data-src="img/toolhead_wiring.jpg"><figcaption>Main PCB wired to the EBB36 I2C header.</figcaption></figure>
+</section>
+</section>
+
+<!-- ============================== 3 INSTALL ============================== -->
+<section class="panel" data-title="Install" hidden>
+<h2><span class="num">3</span>Install</h2>
+
+<section class="sub" data-title="Install the module">
+<h3>3.1 Install the module</h3>
+<p>Connect to the printer with SSH, as your normal user (no <code>sudo</code>), and run:</p>
+<p class="lbl run">Run (SSH)</p>
+<div class="cb"><pre><code>cd ~
+git clone https://github.com/ozancs/oznlab-sensor.git
+cd oznlab-sensor
+./install.sh</code></pre></div>
+<p class="lbl ok">You should see</p>
+<p><code>Linking oznlab_sensor.py into ...</code>, <code>Adding the update manager entry to moonraker.conf</code> and <code>Done.</code> at the end. Mainsail and Fluidd now list <b>oznlab_sensor</b> in the Update Manager, so new versions arrive with one click.</p>
+<p class="lbl bad">If not</p>
+<div class="tw"><table class="fix">
+<tr><td><code>Klipper not found in /root/klipper</code></td><td>You used <code>sudo</code>. Run <code>./install.sh</code> without it.</td></tr>
+<tr><td><code>Klipper not found in ...</code></td><td>Klipper lives somewhere else: <code>KLIPPER_PATH=/path/to/klipper ./install.sh</code></td></tr>
+<tr><td><code>No moonraker.conf in ...</code></td><td>Several printers on one Pi (KIAUH). The installer prints the right folder: <code>CONFIG_PATH=~/printer_1_data/config ./install.sh</code></td></tr>
+</table></div>
+</section>
+
+<section class="sub" data-title="printer.cfg" hidden>
+<h3>3.2 Add the section to printer.cfg</h3>
+<p>Paste this into <code>printer.cfg</code>. Change three lines if your setup differs:</p>
+<ul>
+  <li><code>i2c_mcu</code>: the name of your toolhead board's <code>[mcu ...]</code> section. For <code>[mcu EBBCan]</code> it is <code>EBBCan</code>.</li>
+  <li><code>i2c_bus</code>: from the table in step 2.5.</li>
+  <li><code>i2c_address</code>: 43 for JP1 on 2B, 42 for 2A (step 2.2).</li>
+</ul>
+<div class="cb"><pre><code>[oznlab_sensor hotend]
+i2c_mcu: EBBCan
+i2c_bus: i2c3_PB3_PB4
+i2c_address: 43
+data_rate: 200
+tap_adjust_z: 0.04
+pa_speed: 3.0
+pa_duration: 1.5
+clog_ratio: 2.0
+runout_ratio: 0.25
+confirm_windows: 3
+confirm_time: 10.0
+monitor_min_z: 0.5
+clog_gcode: PAUSE
+runout_gcode: PAUSE</code></pre></div>
+</section>
+
+<section class="sub" data-title="stepper_z" hidden>
+<h3>3.3 Change position_min in [stepper_z]</h3>
+<p>The tap moves slightly below zero, so this has to be negative. Find <code>position_min</code> in your <code>[stepper_z]</code> section and set it to:</p>
+<div class="cb"><pre><code>position_min: -1</code></pre></div>
+<p><small>If you skip this, step 4.1 reports it as a <code>[FAIL]</code>.</small></p>
+</section>
+
+<section class="sub" data-title="Restart" hidden>
+<h3>3.4 Restart Klipper</h3>
+<p class="lbl run">Run (SSH)</p>
+<div class="cb"><pre><code>sudo systemctl restart klipper</code></pre></div>
+<p class="lbl ok">You should see</p>
+<p>Klipper comes back to <b>Ready</b> in Mainsail / Fluidd, and <code>OZNLAB_HELP</code> in the console lists the commands.</p>
+<p class="lbl bad">If not</p>
+<div class="tw"><table class="fix">
+<tr><td><code>Unknown command: OZNLAB_HELP</code></td><td>install.sh from 3.1 did not run, or Klipper was restarted with <code>FIRMWARE_RESTART</code>. That does not load a new module; use the command above.</td></tr>
+<tr><td><code>Section 'oznlab_sensor hotend' is not a valid config section</code></td><td>Same as above: Klipper does not see the module.</td></tr>
+<tr><td>Klipper error mentioning the MCU name</td><td><code>i2c_mcu</code> does not match the name of your <code>[mcu ...]</code> section.</td></tr>
+<tr><td>Klipper error mentioning <code>i2c_bus</code></td><td>The bus name does not exist on that MCU. Check step 2.5.</td></tr>
+</table></div>
+<div class="note">Whenever <code>oznlab_sensor.py</code> changes later, run this restart again.</div>
+</section>
+</section>
+
+<!-- ============================== 4 SETUP ============================== -->
+<section class="panel" data-title="Setup" hidden>
+<h2><span class="num">4</span>Setup</h2>
+
+<section class="sub" data-title="Health check">
+<h3>4.1 Health check</h3>
+<p>Everything from here is typed into the Mainsail / Fluidd console. Nothing moves in this step.</p>
+<p class="lbl run">Run</p>
+<div class="cb"><pre><code>OZNLAB_SETUP STEP=1</code></pre></div>
+<p class="lbl ok">You should see</p>
+<pre class="out">STEP 1/8  WIRING AND SENSOR
+  [ OK ] LDC1612 answers (id 5449/3055)
+  [ OK ] f0 = ... MHz, noise ... Hz rms, ... samples/s
+  ...
+  Everything answers.</pre>
+<p>Two <code>[WARN]</code> lines are normal at this point: <code>reg_drive_current not set yet</code> (fixed in 4.2) and <code>PRINT_START does not call ...</code> (fixed in step 5).</p>
+<p class="lbl bad">If not</p>
+<div class="tw"><table class="fix">
+<tr><td><code>[FAIL] sensor does not answer on I2C</code></td><td>Check the four wires against the colours in 2.5, that JP1 is soldered, and that <code>i2c_address</code> matches JP1 (2B = 43, 2A = 42).</td></tr>
+<tr><td><code>[FAIL] wrong chip id</code></td><td>Another device answers on that address. Use the other JP1 pad and change <code>i2c_address</code>.</td></tr>
+<tr><td><code>[FAIL] no samples arrived</code></td><td>Restart Klipper (3.4) and run again.</td></tr>
+<tr><td><code>[WARN] f0 outside the usual 2-4 MHz</code></td><td>The coil is not connected. Check the solder joints on A, B and the coil pads.</td></tr>
+<tr><td><code>[FAIL] ... conversion errors</code></td><td>Do step 4.2.</td></tr>
+<tr><td><code>[WARN] noise ... is high</code></td><td>Check that the coil and its wires cannot move (2.4).</td></tr>
+<tr><td><code>[FAIL] [stepper_z] position_min</code></td><td>Do step 3.3.</td></tr>
+</table></div>
+</section>
+
+<section class="sub" data-title="Drive current" hidden>
+<h3>4.2 Drive current</h3>
+<p>Klipper sets how hard the coil is driven. Do this once.</p>
+<p class="lbl run">Run</p>
+<div class="cb"><pre><code>LDC_CALIBRATE_DRIVE_CURRENT CHIP=hotend
+SAVE_CONFIG</code></pre></div>
+<p>Klipper restarts after <code>SAVE_CONFIG</code>. Then:</p>
+<div class="cb"><pre><code>OZNLAB_SETUP STEP=2</code></pre></div>
+<p class="lbl ok">You should see</p>
+<pre class="out">STEP 2/8  DRIVE CURRENT
+  [ OK ] no conversion errors, drive current is fine.</pre>
+<p class="lbl bad">If not</p>
+<div class="tw"><table class="fix">
+<tr><td><code>The sensor reported errors</code></td><td>Run the calibration again. If it stays, check the coil solder joints and the mount (2.3, 2.4).</td></tr>
+</table></div>
+</section>
+
+<section class="sub" data-title="Push test" hidden>
+<h3>4.3 Does the coil feel the hotend?</h3>
+<p>The console listens for 25 s. Keep your hands off for the first 3 s, then push the nozzle <b>up</b> with a finger three times, short pushes.</p>
+<p class="lbl run">Run</p>
+<div class="cb"><pre><code>OZNLAB_SETUP STEP=3</code></pre></div>
+<p class="lbl ok">You should see</p>
+<pre class="out">oznlab watch: 25 s - hold still 3 s for calibration, then tap
+TAP #1  peak ... Hz  slew ... Hz/s  ... ms
+TAP #2  ...
+TAP #3  ...</pre>
+<figure class="media" data-src="video/push_test.mp4" data-kind="video"><figcaption>The push test.</figcaption></figure>
+<p class="lbl bad">If not</p>
+<div class="tw"><table class="fix">
+<tr><td>No <code>TAP</code> lines</td><td>The coil does not see the heatsink move. Check that it faces the aluminium heatsink, is close to it, and is fixed (2.4).</td></tr>
+<tr><td><code>PRESS</code> lines instead of <code>TAP</code></td><td>You held the push too long. It still shows the coil feels it; try shorter pushes.</td></tr>
+<tr><td><code>watch already running</code></td><td>Run <code>OZNLAB_WATCH OFF=1</code>, then again.</td></tr>
+</table></div>
+</section>
+
+<section class="sub" data-title="Tap test" hidden>
+<h3>4.4 Tap test and Z offset</h3>
+<div class="need"><b>Before:</b> home (<code>G28</code>), heat the nozzle to printing temperature, clean the tip, move over the middle of the bed.</div>
+<p class="lbl run">Run</p>
+<div class="cb"><pre><code>OZNLAB_SETUP STEP=4
+SAVE_CONFIG</code></pre></div>
+<p>The nozzle taps the bed a few times and sets the Z offset. <code>SAVE_CONFIG</code> keeps it and restarts Klipper.</p>
+<p class="lbl ok">You should see</p>
+<pre class="out">STEP 4/8  TAP TEST AND Z OFFSET
+OznLab tap: z offset ... set (5 taps within ... mm) - SAVE_CONFIG to keep it</pre>
+<p>The <code>within</code> number is how far apart the taps were. The smaller the better; on our printer it is around 0.01 mm.</p>
+<p class="lbl bad">If not</p>
+<div class="tw"><table class="fix">
+<tr><td><code>Home first</code> / <code>Heat the nozzle</code></td><td>Do what it says, then run again.</td></tr>
+<tr><td><code>the taps disagree ... z offset NOT changed</code></td><td>Nothing was set, so skip <code>SAVE_CONFIG</code>. Clean the nozzle tip, wait a minute after heating, check that the coil cannot move, and run again.</td></tr>
+<tr><td><code>contact amplitude too small</code> or <code>no contact signature found</code></td><td>Check 4.3 first. If that is fine, the nozzle may not have reached the bed: check your Z endstop / probe height.</td></tr>
+<tr><td><code>TARGET=... is below [stepper_z] position_min</code></td><td>Do step 3.3.</td></tr>
+</table></div>
+</section>
+
+<section class="sub" data-title="PA measure" hidden>
+<h3>4.5 Pressure advance: measure</h3>
+<div class="need"><b>Before:</b> filament loaded, nozzle at printing temperature, nozzle over the purge area or anywhere plastic can drop. It lifts Z by itself.</div>
+<p class="lbl run">Run</p>
+<div class="cb"><pre><code>OZNLAB_SETUP STEP=5</code></pre></div>
+<p>It extrudes a little filament in the air, about 10 s.</p>
+<p class="lbl ok">You should see</p>
+<pre class="out">STEP 5/8  PRESSURE ADVANCE (measures the melt pressure rise, applies nothing)
+OznLab PA: measured ... (tau ... s) - not applied
+  ...
+  measured tau = ... s, so pa_scale = PATTERN_PA / ...</pre>
+<p class="lbl bad">If not</p>
+<div class="tw"><table class="fix">
+<tr><td><code>no pressure signal</code></td><td>No filament in the nozzle, or the nozzle is not hot.</td></tr>
+<tr><td><code>no reliable measurement</code></td><td>Run it again. Check that filament comes out while it runs.</td></tr>
+</table></div>
+<div class="note">Do not restart Klipper between this step and 4.6. The next step uses this measurement.</div>
+</section>
+
+<section class="sub" data-title="PA pattern" hidden>
+<h3>4.6 Pressure advance: pattern test</h3>
+<p>This is done once, to match the measurement to your slicer.</p>
+<div class="need"><b>Z offset:</b> the one saved in 4.4 is already active for this print, with <code>tap_adjust_z</code> from 3.2 included. If your PRINT_START sets its own <code>SET_GCODE_OFFSET Z=...</code>, remove that line, it would replace it.</div>
+<ol>
+  <li>In OrcaSlicer: Calibration, Pressure Advance, Pattern. Print it with the filament and temperature you normally use.</li>
+  <li>Find the cleanest line and read its PA value.</li>
+  <li>Put <b>your</b> value in place of <code>&lt;your_pa&gt;</code> and run:</li>
+</ol>
+<div class="cb"><pre><code>OZNLAB_PA_SCALE PATTERN_PA=&lt;your_pa&gt; TYPE=&lt;filament&gt;
+SAVE_CONFIG</code></pre></div>
+<p>Use the filament type as the slicer names it, for example <code>TYPE=PLA</code> or <code>TYPE=ASA</code>. Each filament type gets its own scale (<code>pa_scale_pla</code>, <code>pa_scale_asa</code> ...). Repeat this step once for every filament type you print.</p>
+<p class="lbl ok">You should see</p>
+<pre class="out">OznLab: pa_scale_asa ... (= ... / tau ...), for ASA - SAVE_CONFIG to keep it</pre>
+<p>This command only does the math. It does not print or move anything.</p>
+<p class="lbl bad">If not</p>
+<div class="tw"><table class="fix">
+<tr><td><code>run OZNLAB_CALIBRATE_PA first</code></td><td>Klipper was restarted after 4.5. Do 4.5 again, then this command. No need to print the pattern again.</td></tr>
+<tr><td><code>computed pa_scale ... is out of range</code></td><td>Check the value you typed, then do 4.5 again.</td></tr>
+</table></div>
+<div class="note">In the slicer's filament profile, turn <b>"Enable pressure advance"</b> off. From now on PA is measured at the start of every print, and the slicer would overwrite it.</div>
+<p><small><code>OZNLAB_SETUP</code> steps 6 to 8: Z homing with the nozzle (optional, step 6.6 of this guide), the bed mesh options (step 6.5) and the PRINT_START lines (next step).</small></p>
+</section>
+</section>
+
+<!-- ============================== 5 PRINT START ============================== -->
+<section class="panel" data-title="Print start" hidden>
+<h2><span class="num">5</span>PRINT_START and PRINT_END</h2>
+
+<section class="sub" data-title="PRINT_START">
+<h3>5.1 PRINT_START</h3>
+<p>First, so the sensor knows which filament is printing: in OrcaSlicer, Printer settings, Machine G-code, add this to the end of your <code>PRINT_START</code> line:</p>
+<div class="cb"><pre><code> FILAMENT={filament_type[initial_extruder]}</code></pre></div>
+<p>Then put this in your <b>PRINT_START</b> macro, after the nozzle has reached printing temperature and before the prime line. Replace <code>PA_X</code> and <code>PA_Y</code> with a spot over your purge bucket or any place where plastic can drop.</p>
+<div class="cb"><pre><code>    # no probe? load the nozzle mesh first (step 6.5)
+    #BED_MESH_PROFILE LOAD=default
+
+    OZNLAB_PRINT_START FILAMENT="{params.FILAMENT|default('')}" PA_X=300 PA_Y=300</code></pre></div>
+<p>That one line tells the sensor the filament, measures pressure advance over the purge area, waits 15 s for the hotend to settle and taps the bed centre for the Z offset. <code>TAP_X</code> / <code>TAP_Y</code> pick another tap spot, <code>SETTLE=</code> another wait.</p>
+<p>If a filament has no scale of its own yet, the console says so at the start of the print and the default <code>pa_scale</code> is used.</p>
+<p>Then your prime line, and as the <b>last lines</b> of PRINT_START:</p>
+<div class="cb"><pre><code>    OZNLAB_MONITOR
+    #OZNLAB_CRASH</code></pre></div>
+<p><small>Remove the <code>#</code> in front of <code>OZNLAB_CRASH</code> to turn on the crash watch (step 6.4). Prefer separate lines? <code>OZNLAB_FILAMENT</code>, <code>OZNLAB_CALIBRATE_PA</code> and <code>OZNLAB_TAP SAVE=0</code> still work on their own.</small></p>
+</section>
+
+<section class="sub" data-title="PRINT_END" hidden>
+<h3>5.2 PRINT_END and CANCEL_PRINT</h3>
+<p>Add this to both macros:</p>
+<div class="cb"><pre><code>    OZNLAB_PRINT_END</code></pre></div>
+<p>Save and restart, then check that Klipper finds the calls:</p>
+<div class="cb"><pre><code>OZNLAB_CHECK</code></pre></div>
+<p class="lbl ok">You should see</p>
+<pre class="out">OznLab Sensor check [PASS]
+  ...
+  [ OK ] PRINT_START calls CALIBRATE_PA, TAP and MONITOR</pre>
+<p class="lbl bad">If not</p>
+<div class="tw"><table class="fix">
+<tr><td><code>[WARN] PRINT_START does not call: ...</code></td><td>The named command is missing from PRINT_START, or from the macros it calls.</td></tr>
+</table></div>
+</section>
+
+<section class="sub" data-title="First print" hidden>
+<h3>5.3 First print</h3>
+<p>Start any print and watch the console during PRINT_START.</p>
+<p class="lbl ok">You should see</p>
+<pre class="out">OznLab PA: pressure advance ... set (was ...)
+OznLab tap: z offset ... set (5 taps within ... mm)
+OznLab monitor: on - clog and runout watch for this print</pre>
+<p>Nothing is written to the config. <code>SAVE=0</code> sets the Z offset for this print only, and PA is set and not saved.</p>
+<p class="lbl bad">If not</p>
+<div class="tw"><table class="fix">
+<tr><td><code>OznLab PA: no reliable measurement</code></td><td>The nozzle was not hot yet, or no filament came out. Check that it runs after the heat-up in PRINT_START.</td></tr>
+<tr><td><code>OznLab tap: the taps disagree</code></td><td>Ooze on the tip. Give the hotend more time before the tap: <code>SETTLE=30</code> on <code>OZNLAB_PRINT_START</code>.</td></tr>
+<tr><td><code>OznLab monitor: not started</code></td><td><code>OZNLAB_CALIBRATE_PA</code> did not run earlier in this print.</td></tr>
+</table></div>
+<p>When the print ends the console shows a short report: Z offset, PA, clog / runout and crash events, and the peak temperatures. <code>OZNLAB_REPORT</code> shows it again.</p>
+<p><small>Printing from OctoPrint or another host that streams G-code? Add <code>OZNLAB_REPORT</code> as the last line of PRINT_END, the end of the print is not detected otherwise.</small></p>
+<div class="note"><b>First layer:</b> too squished, raise <code>tap_adjust_z</code> in the config. Too loose, lower it.</div>
+</section>
+</section>
+
+<!-- ============================== 6 FEATURES ============================== -->
+<section class="panel" data-title="Tools" data-star="1" hidden>
+<h2><span class="num">6</span>Get more out of it</h2>
+<p class="intro">Setup is done. Because the sensor feels the melt pressure directly, it can also answer questions you normally answer by printing test towers. Each of these takes a few minutes, runs in the air, and hands you a number to type into your slicer. <code>OZNLAB_TEST TYPE=flow</code>, <code>TYPE=retract</code> and <code>TYPE=temp</code> run the same three tests, and <code>OZNLAB_MENU</code> has them as buttons.</p>
+
+<section class="sub" data-title="Max flow">
+<div class="gain"><span class="gain-k">You get</span> the real volumetric limit of your hotend with this filament, in mm&#179;/s.</div>
+<h3>6.1 Max flow</h3>
+<p>It extrudes faster and faster and watches the pressure. While the hotend keeps up, pressure follows the speed smoothly. When it can't melt fast enough or the extruder starts to slip, the pressure curve breaks. The last clean speed is your limit.</p>
+<div class="need"><b>Before:</b> filament loaded, nozzle at printing temperature, nozzle over the purge area.</div>
+<p class="lbl run">Run</p>
+<div class="cb"><pre><code>OZNLAB_MAX_FLOW</code></pre></div>
+<p class="lbl ok">You should see</p>
+<pre class="out">OznLab Sensor max flow: stepping ... mm/s in ... mm/s steps ...
+  1.0 mm/s (... mm3/s): pressure ... Hz, ripple ... Hz
+  2.0 mm/s (... mm3/s): pressure ... Hz, ripple ... Hz
+  ...
+OznLab Sensor max flow: last good ... mm/s = ... mm3/s (...)
+  Put about ... mm3/s in the slicer (10% margin).</pre>
+<p class="lbl use">Use it</p>
+<p>OrcaSlicer: Filament settings, <b>Max volumetric speed</b>. Put the number from the last line there.</p>
+<p><small>No limit found? Add <code>MAX=</code> with a higher speed in mm/s to go further.</small></p>
+</section>
+
+<section class="sub" data-title="Retraction" hidden>
+<div class="gain"><span class="gain-k">You get</span> the shortest retraction that actually relieves the nozzle pressure.</div>
+<h3>6.2 Retraction</h3>
+<p>It builds pressure, retracts a given length, and measures how much pressure is left. Too short and the pressure stays (ooze). Too long and the melt is pulled back (gaps when the line restarts). It tries lengths from 0.2 to 1.4 mm.</p>
+<div class="need"><b>Before:</b> filament loaded, nozzle at printing temperature, nozzle over the purge area.</div>
+<p class="lbl run">Run</p>
+<div class="cb"><pre><code>OZNLAB_RETRACT_TEST</code></pre></div>
+<p class="lbl ok">You should see</p>
+<pre class="out">OznLab Sensor retraction test: pressure is built at ... mm/s, then ... mm is retracted ...
+  0.20 mm -> ...% of the pressure left
+  0.40 mm -> ...% of the pressure left
+  0.60 mm -> melt pulled back (...%)
+  ...
+OznLab Sensor retraction test: use about ... mm at 35 mm/s.</pre>
+<p><small>"Melt pulled back" means that length is too long: the plastic is sucked back and the next line starts late.</small></p>
+<p class="lbl use">Use it</p>
+<p>OrcaSlicer: Printer settings, Extruder, <b>Length</b> and <b>Retraction speed</b> (or the same fields under the filament's overrides).</p>
+<p><small>Nothing got below 10%? Add <code>MAX=</code> with a longer length in mm.</small></p>
+</section>
+
+<section class="sub" data-title="Temperature" hidden>
+<div class="gain"><span class="gain-k">You get</span> the temperature above which more heat stops helping the flow.</div>
+<h3>6.3 Temperature</h3>
+<p>It steps the nozzle temperature, from 20 &#176;C below your current target to 15 &#176;C above, and measures the pressure at each step. Pressure drops quickly while the plastic is too cold and flattens once it flows freely. It puts your temperature back at the end.</p>
+<div class="need"><b>Before:</b> filament loaded, nozzle at your usual temperature for this filament, nozzle over the purge area.</div>
+<p class="lbl run">Run</p>
+<div class="cb"><pre><code>OZNLAB_TEMP_SCAN</code></pre></div>
+<p class="lbl ok">You should see</p>
+<pre class="out">OznLab Sensor temperature scan: ... -> ... C in 5 C steps at 3.0 mm/s.
+  ... C: pressure ... Hz
+  ...
+OznLab Sensor temperature scan: pressure ... Hz at ... C -> ... Hz at ... C.
+  Above about ... C more heat buys little - ... C is a sensible setting.</pre>
+<p class="lbl use">Use it</p>
+<p>OrcaSlicer: Filament settings, <b>Nozzle</b> temperature. This only covers the flow side; layer bonding and stringing are still worth a look on a real print.</p>
+<p><small>Different range: <code>OZNLAB_TEMP_SCAN MIN=200 MAX=240</code>.</small></p>
+</section>
+
+<section class="sub" data-title="Crash watch" hidden>
+<div class="gain"><span class="gain-k">You get</span> a message, or a pause, when the nozzle hits something during a print.</div>
+<h3>6.4 Crash watch <span class="pill warn">experimental</span></h3>
+<p>Watches for a sudden push on the nozzle while printing, like hitting a curled edge. The limit is in microns of nozzle push (<code>crash_um</code>, default 80) and follows the sensitivity measured by the last tap. It only runs when turned on, and by default it only prints a message.</p>
+<p><b>Test by hand first.</b> Run a tap so the sensitivity is known, then knock the hotend sideways with a finger for 60 s:</p>
+<div class="cb"><pre><code>OZNLAB_TAP SAVE=0
+OZNLAB_CRASH TEST=1</code></pre></div>
+<p>Every knock is reported, for example <code>~200 um push (limit 80 um) -&gt; WOULD TRIGGER</code>. Nothing is paused in test mode. <small>On our printer, light knocks (24 to 75 um) stayed under the limit and hard ones (92 to 219 um) went over.</small></p>
+<p><b>During prints:</b> remove the <code>#</code> in front of <code>OZNLAB_CRASH</code> in PRINT_START (step 5.1). Watch the console for a few prints. If it behaves, make it pause the print by adding this to <code>[oznlab_sensor hotend]</code>:</p>
+<div class="cb"><pre><code>crash_gcode: PAUSE</code></pre></div>
+<p>Current limit and noise at any time:</p>
+<div class="cb"><pre><code>OZNLAB_CRASH STATUS=1</code></pre></div>
+</section>
+
+<section class="sub" data-title="Bed mesh" hidden>
+<div class="gain"><span class="gain-k">You get</span> a bed mesh measured by the nozzle itself, for printers without a probe.</div>
+<h3>6.5 Bed mesh with the nozzle</h3>
+<p>With a BTT Eddy or another probe, keep using it for the mesh. This is for printers without one.</p>
+<p><b>Once:</b> run the wizard. A popup in Mainsail / Fluidd lets you jog the nozzle to the four corners of the usable bed and pick the grid. It adds a <code>[bed_mesh]</code> section if you have none.</p>
+<div class="cb"><pre><code>OZNLAB_MESH_SETUP</code></pre></div>
+<p><b>Measure:</b> heat the nozzle to printing temperature and the bed to its printing temperature, brush the nozzle, retract a few mm, then:</p>
+<div class="cb"><pre><code>OZNLAB_MESH
+SAVE_CONFIG</code></pre></div>
+<p>Every point gets one squash tap (not used) and two taps that must agree within 0.015 mm. The result goes into Klipper's normal <code>[bed_mesh]</code> and is stored as the <code>default</code> profile (<code>oznlab</code> if the printer also has a probe). Run from the console, it turns the heaters off when it is done.</p>
+<div class="note">Do it hot. Below about 180 &#176;C the plastic on the tip is soft and the points drift.</div>
+<p>Klipper does not load a mesh after a restart, so load it in PRINT_START (step 5.1), or measure only under the print every time (needs object labels in the slicer):</p>
+<div class="cb"><pre><code>OZNLAB_MESH ADAPTIVE=1</code></pre></div>
+<p>To compare two profiles, for example the probe's <code>default</code> and the nozzle's <code>oznlab</code>:</p>
+<div class="cb"><pre><code>OZNLAB_MESH_COMPARE A=default B=oznlab</code></pre></div>
+<p><b>Speed:</b> these go in <code>[oznlab_sensor hotend]</code>. The values below are the defaults.</p>
+<div class="cb"><pre><code>mesh_speed: 150
+mesh_samples: 2
+mesh_travel_z: 2
+tap_speed: 2.0</code></pre></div>
+<div class="tw"><table>
+<tr><td><code>mesh_speed</code></td><td>XY travel between points, mm/s</td></tr>
+<tr><td><code>mesh_samples</code></td><td>taps kept per point. 1 is faster</td></tr>
+<tr><td><code>mesh_travel_z</code></td><td>lift between points, mm</td></tr>
+<tr><td><code>tap_speed</code></td><td>descent speed, mm/s. Higher values are not tested yet</td></tr>
+</table></div>
+<p>A 5x5 grid takes about 3 minutes with the defaults. On a small bed, a smaller grid and <code>mesh_samples: 1</code> make it much quicker.</p>
+<p><small>On our printer the nozzle mesh and a BTT Eddy mesh agreed within 0.03 mm after removing offset and tilt.</small></p>
+</section>
+
+<section class="sub" data-title="Z homing" hidden>
+<div class="gain"><span class="gain-k">You get</span> Z homing on the bed with the nozzle, no endstop or probe needed.</div>
+<h3>6.6 Z homing with the nozzle</h3>
+<p>The nozzle comes down, the toolhead board stops the Z motors on contact, then slow taps measure the exact height. It needs <code>trigger_analog</code> in the Klipper firmware of the toolhead board. If a BTT Eddy already homes on that board, it has it.</p>
+<p><code>OZNLAB_SETUP STEP=6</code> walks you through it. Run it up to three times; each run tells you what to do next.</p>
+
+<p class="lbl run">1. Turn it on</p>
+<p>Add to <code>[oznlab_sensor hotend]</code> and restart Klipper:</p>
+<div class="cb"><pre><code>z_homing: 1</code></pre></div>
+<p><small>If Klipper then refuses to start with <code>unknown command config_trigger_analog</code>, the toolhead firmware is too old: remove the line again.</small></p>
+
+<p class="lbl run">2. Test run</p>
+<div class="need"><b>Before:</b> home with your current method (<code>G28</code>), nozzle at 150 &#176;C or printing temperature and clean, over the middle of the bed.</div>
+<div class="cb"><pre><code>OZNLAB_SETUP STEP=6</code></pre></div>
+<p>It does a test descent without changing anything:</p>
+<pre class="out">OznLab home test: OK - stopped ... mm past the bed, contact at z=...</pre>
+<p>If that is OK it prints the exact lines for your printer. They look like this:</p>
+<p class="where">in <code>[oznlab_sensor hotend]</code></p>
+<div class="cb"><pre><code>z_homing_probe: 1</code></pre></div>
+<p class="where">in <code>[stepper_z]</code></p>
+<div class="cb"><pre><code>endstop_pin: probe:z_virtual_endstop
+homing_speed: 3
+homing_retract_dist: 0
+position_min: -1</code></pre></div>
+<p class="where">new section, if you have no <code>[safe_z_home]</code> or <code>[homing_override]</code> (it prints your own X and Y)</p>
+<div class="cb"><pre><code>[safe_z_home]
+home_xy_position: &lt;bed_center_x&gt;, &lt;bed_center_y&gt;
+z_hop: 5</code></pre></div>
+<div class="note">Klipper allows one probe. If you have another one, disable its section <b>and</b> delete its <code>#*#</code> lines at the bottom of printer.cfg (keep a backup). Only commenting those lines out makes Klipper ignore the whole saved block.</div>
+
+<p class="lbl run">3. Store the Z offset</p>
+<p>Restart Klipper, <code>G28</code> (now with the nozzle), heat the nozzle, then:</p>
+<div class="cb"><pre><code>OZNLAB_SETUP STEP=6
+SAVE_CONFIG</code></pre></div>
+<p>It taps after homing and stores the Z offset, which is then applied at every start.</p>
+<p class="lbl bad">If not</p>
+<div class="tw"><table class="fix">
+<tr><td><code>too close to the noise floor</code></td><td>Heat the nozzle. The sensor is less sensitive cold, and the command refuses to move rather than risk a missed trigger.</td></tr>
+<tr><td><code>stopped late</code> (0.3 mm or more)</td><td>Check that the coil cannot move, heat the nozzle, run again.</td></tr>
+</table></div>
+<p><small>On our printer: the trigger stops 0.05 to 0.09 mm past contact at 3 mm/s. Three G28 in a row with the nozzle put Z 0 within 0.007 mm of each other and within 0.01 mm of the tap contact.</small></p>
+</section>
+
+<section class="sub" data-title="Thermal" hidden>
+<div class="gain"><span class="gain-k">You get</span> how much the nozzle drops per &#176;C as the hotend heats up.</div>
+<h3>6.7 Thermal calibration</h3>
+<p>Taps at several temperatures and measures how much the nozzle moves per &#176;C. Not needed if you tap at printing temperature every print (step 5.1 does). Unload the filament first and park over a clean spot.</p>
+<div class="cb"><pre><code>OZNLAB_THERMAL_CAL
+SAVE_CONFIG</code></pre></div>
+</section>
+</section>
+
+<!-- ============================== 7 ============================== -->
+<section class="panel" data-title="Help" hidden>
+<h2><span class="num">7</span>Commands and troubleshooting</h2>
+<p><code>OZNLAB_HELP</code> in the console lists every command. Add <code>VERBOSE=1</code> to any command to see the details on the console too (they always go to klippy.log).</p>
+
+<div class="tw"><table>
+<tr><th>Command</th><th>What it does</th></tr>
+<tr><td><code>OZNLAB_MENU</code></td><td>Popup with all the tools as buttons (Mainsail and Fluidd), grouped in four pages.</td></tr>
+<tr><td><code>OZNLAB_PRINT_START</code></td><td>Filament, pressure advance, settle and tap in one line (step 5.1).</td></tr>
+<tr><td><code>OZNLAB_PRINT_END</code></td><td>Stops the clog / runout and crash watch (step 5.2).</td></tr>
+<tr><td><code>OZNLAB_SETUP</code></td><td>Guided setup, one step per call.</td></tr>
+<tr><td><code>OZNLAB_REPORT</code></td><td>Summary of the current or last print.</td></tr>
+<tr><td><code>OZNLAB_CHECK</code></td><td>Wiring, sensor and config check.</td></tr>
+<tr><td><code>OZNLAB_STATUS</code></td><td>1 s reading: frequency, noise, errors.</td></tr>
+<tr><td><code>OZNLAB_WATCH</code></td><td>Live TAP / PRESS events on the console. <code>OFF=1</code> stops it.</td></tr>
+<tr><td><code>OZNLAB_TAP [SAVE=0]</code></td><td>Nozzle tap, sets the Z offset. <code>SAVE=0</code>: this print only.</td></tr>
+<tr><td><code>OZNLAB_CALIBRATE_PA</code></td><td>Measures and applies pressure advance.</td></tr>
+<tr><td><code>OZNLAB_PA_SCALE PATTERN_PA=&lt;your_pa&gt;</code></td><td>Sets <code>pa_scale</code> from your pattern test result.</td></tr>
+<tr><td><code>OZNLAB_MONITOR</code></td><td>Clog / runout watch. <code>OFF=1</code>, <code>STATUS=1</code>.</td></tr>
+<tr><td><code>OZNLAB_MESH_SETUP</code></td><td>Mesh area wizard (popup).</td></tr>
+<tr><td><code>OZNLAB_MESH [ADAPTIVE=1]</code></td><td>Bed mesh with the nozzle.</td></tr>
+<tr><td><code>OZNLAB_MESH_COMPARE</code></td><td>Shape difference between two mesh profiles.</td></tr>
+<tr><td><code>OZNLAB_HOME_TEST</code></td><td>Dry run of nozzle Z homing.</td></tr>
+<tr><td><code>OZNLAB_CRASH</code></td><td>Crash watch. <code>OFF=1</code>, <code>STATUS=1</code>, <code>TEST=1</code>.</td></tr>
+<tr><td><code>OZNLAB_TEST TYPE=flow|retract|temp</code></td><td>The three filament tests from one command (same as the three below).</td></tr>
+<tr><td><code>OZNLAB_MAX_FLOW</code></td><td>Volumetric limit for the slicer.</td></tr>
+<tr><td><code>OZNLAB_RETRACT_TEST</code></td><td>Retraction length for the slicer.</td></tr>
+<tr><td><code>OZNLAB_TEMP_SCAN</code></td><td>Pressure vs temperature.</td></tr>
+<tr><td><code>OZNLAB_THERMAL_CAL</code></td><td>Nozzle drift per &#176;C.</td></tr>
+<tr><td><code>OZNLAB_STREAM DURATION= FILE=</code></td><td>Raw samples to a CSV file.</td></tr>
+</table></div>
+
+<h3>Troubleshooting</h3>
+<p>Every step above has its own <b>If not</b> list. These are the common ones in one place.</p>
+<div class="tw"><table>
+<tr><th>You see</th><th>Try</th></tr>
+<tr><td><code>Unknown command: OZNLAB_...</code></td><td><code>install.sh</code> from step 3.1 did not run, or Klipper was not restarted with <code>sudo systemctl restart klipper</code>.</td></tr>
+<tr><td><code>there is no [mcu EBBCan] in your config</code></td><td><code>i2c_mcu</code> must be the name of your toolhead board's <code>[mcu ...]</code> section. The message lists the names you have.</td></tr>
+<tr><td><code>Unknown i2c_bus '...'</code></td><td>Wrong bus name for this board (table in step 2.5), or the toolhead board runs older Klipper firmware than the bus needs. Flash it with the current Klipper.</td></tr>
+<tr><td><code>uses the same i2c_bus and address 42</code></td><td>A BTT Eddy sits on the same wires. Solder JP1 to 2B and set <code>i2c_address: 43</code> (step 2.2).</td></tr>
+<tr><td><code>z_homing needs a Klipper from late May 2026</code> or <code>firmware on '...' is too old</code></td><td>Update Klipper on the Pi, flash the toolhead board with the same version, or set <code>z_homing: 0</code>.</td></tr>
+<tr><td>Sensor not responding / no data</td><td>Check the four wires, JP1 soldered, and that <code>i2c_address</code> matches JP1 (step 2.2).</td></tr>
+<tr><td><code>errors</code> above 0</td><td><code>LDC_CALIBRATE_DRIVE_CURRENT CHIP=hotend</code>, then <code>SAVE_CONFIG</code>. If it stays, check the coil wires and mount.</td></tr>
+<tr><td>Tap: stddev too high</td><td>Wait after heating, clean the nozzle, check that the coil does not move.</td></tr>
+<tr><td>Tap: contact amplitude too small</td><td>The nozzle did not reach the bed, or the coil does not see the heatsink well (step 4.3).</td></tr>
+<tr><td>PA: no pressure signal</td><td>No filament, or the nozzle is not hot.</td></tr>
+<tr><td><code>[WARN] ... no [pause_resume]</code></td><td>Add a <code>[pause_resume]</code> section (Mainsail and Fluidd configs include one). Without it a clog cannot stop the print.</td></tr>
+<tr><td>False clog / runout pause</td><td><code>OZNLAB_MONITOR OFF=1</code> stops the watch without touching the print.</td></tr>
+</table></div>
+
+</section>
+
+<div class="nav">
+  <button class="back" type="button">&#8592; Back</button>
+  <button class="next" type="button">Next &#8594;</button>
+</div>
+<footer>Made by ozncshn. The Klipper module is GPLv3.</footer>
+</main>
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+</script>
+<script type="module">
+// Swaps each .v3d placeholder for a live model, but only if the .glb is actually there.
+// If it is missing, or the page was opened straight off disk, the render stays.
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const dark = () => matchMedia('(prefers-color-scheme: dark)').matches
+  && document.documentElement.dataset.theme !== 'light';
+
+function note(el, msg) {
+  if (el.querySelector('.why')) return;
+  const d = document.createElement('div'); d.className = 'why'; d.textContent = msg;
+  el.appendChild(d);
+}
+
+async function mount(el) {
+  const url = el.dataset.model;
+  let gltf;
+  try {
+    gltf = await new GLTFLoader().loadAsync(url);
+  } catch {
+    // keep the render, but say why - silently falling back just looks broken
+    el.dataset.done = '1'; el.classList.remove('trying');
+    note(el, location.protocol === 'file:'
+      ? 'Opened straight off disk, so the browser blocked ' + url + '. Serve the folder instead: python3 -m http.server'
+      : url + ' not found next to this page.');
+    return;
+  }
+
+  const w = el.clientWidth, h = el.clientHeight;
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(w, h, false);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
+
+  const scene = new THREE.Scene();
+  const root = gltf.scene;
+
+  // KiCad exports Z-up, three.js is Y-up. Rather than hard-coding that, lay the board flat by
+  // finding its thinnest axis - on any PCB that is the thickness - and standing it on end.
+  root.updateMatrixWorld(true);
+  let box = new THREE.Box3().setFromObject(root);
+  let size = box.getSize(new THREE.Vector3());
+  const thin = (size.x <= size.y && size.x <= size.z) ? 'x' : (size.y <= size.z ? 'y' : 'z');
+  if (thin === 'z') root.rotateX(-Math.PI / 2);
+  else if (thin === 'x') root.rotateZ(Math.PI / 2);
+
+  // centre on the origin and scale so the longest edge is 1 unit. The scale goes on a parent so
+  // it cannot multiply the offset we just applied.
+  root.updateMatrixWorld(true);
+  box = new THREE.Box3().setFromObject(root);
+  size = box.getSize(new THREE.Vector3());
+  const radius = box.getBoundingSphere(new THREE.Sphere()).radius;
+  const k = 1 / Math.max(size.x, size.y, size.z);
+  root.position.sub(box.getCenter(new THREE.Vector3()));
+  const pivot = new THREE.Group(); pivot.add(root); pivot.scale.setScalar(k);
+  scene.add(pivot);
+  const r = radius * k;
+
+  // Neutral studio light. The ground colour is deliberately not black: the underside of a board
+  // is lit by nothing else when you look up at it from the Bottom view.
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f9c, 0.45));
+  const key = new THREE.DirectionalLight(0xffffff, 1.4); key.position.set(2, 3, 2); scene.add(key);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.3); rim.position.set(-2, 1, -2); scene.add(rim);
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.06).texture;
+  // these materials are pure diffuse (metal 0, rough 1), so the environment acts as one more
+  // ambient light on top of the three above - at full strength it washes the board out
+  root.traverse(o => { if (o.material) [].concat(o.material).forEach(m => m.envMapIntensity = 0.3); });
+
+  const cam = new THREE.PerspectiveCamera(35, w / h, 0.01, 100);
+  // Distance that keeps the bounding sphere inside BOTH the vertical and the horizontal field of
+  // view, so the board never clips while it turns - and so a narrow phone viewport still fits it.
+  const fit = () => {
+    const vF = THREE.MathUtils.degToRad(cam.fov);
+    const hF = 2 * Math.atan(Math.tan(vF / 2) * cam.aspect);
+    return 1.3 * r / Math.sin(Math.min(vF, hF) / 2);
+  };
+  const dir = new THREE.Vector3(0.55, 0.62, 1).normalize();   // slightly raised three-quarter view
+  const home = () => dir.clone().multiplyScalar(fit());
+  cam.position.copy(home());
+
+  // A light parented to the camera, so whatever face you turn towards yourself is lit - without
+  // it the Bottom view is a black silhouette, because every other light is above the board.
+  const headlight = new THREE.DirectionalLight(0xffffff, 0.45);
+  headlight.position.set(0.3, 0.5, 1);
+  cam.add(headlight); scene.add(cam);
+
+  const ctl = new OrbitControls(cam, renderer.domElement);
+  ctl.enableDamping = true; ctl.dampingFactor = 0.08;
+  ctl.enablePan = false; ctl.minDistance = r * 1.5; ctl.maxDistance = r * 12;
+  ctl.autoRotate = true; ctl.autoRotateSpeed = 1.1;
+
+  // Rendering is on demand. A permanent requestAnimationFrame loop on two WebGL canvases keeps
+  // the whole page busy - the fans spin up and Windows shows the wait cursor over the canvas.
+  let visible = false, running = false, touched = false;
+  const kick = () => {
+    if (running || !visible || document.hidden) return;
+    running = true; requestAnimationFrame(frame);
+  };
+  function frame() {
+    if (!visible || document.hidden) { running = false; return; }
+    const moved = ctl.update();
+    if (moved) renderer.render(scene, cam);
+    if (ctl.autoRotate || moved) requestAnimationFrame(frame);
+    else running = false;
+  }
+  ctl.addEventListener('change', kick);
+  renderer.domElement.addEventListener('pointerdown', () => { ctl.autoRotate = false; touched = true; });
+  // idle by default, alive while you are looking at it
+  el.addEventListener('pointerenter', () => { if (!touched) { ctl.autoRotate = true; kick(); } });
+  el.addEventListener('pointerleave', () => { ctl.autoRotate = false; });
+  document.addEventListener('visibilitychange', kick);
+  new IntersectionObserver(es => {
+    visible = es[0].isIntersecting;
+    if (visible) kick();
+  }, { threshold: 0 }).observe(el);
+  // one introductory turn, then it settles down
+  setTimeout(() => { if (!touched) ctl.autoRotate = false; }, 9000);
+
+  el.innerHTML = ''; el.dataset.done = '1';
+  el.appendChild(renderer.domElement);
+
+  const btns = document.createElement('div'); btns.className = 'btns';
+  const view = (name, at) => {
+    const b = document.createElement('button'); b.textContent = name;
+    b.onclick = () => { ctl.autoRotate = false; touched = true;
+      cam.position.copy(at()); ctl.target.set(0, 0, 0); ctl.update(); renderer.render(scene, cam); };
+    btns.appendChild(b);
+  };
+  view('Top', () => new THREE.Vector3(0, fit(), 1e-4));
+  view('Bottom', () => new THREE.Vector3(0, -fit(), 1e-4));
+  view('Reset', home);
+  el.appendChild(btns);
+
+  new ResizeObserver(() => {
+    const W = el.clientWidth, H = el.clientHeight;
+    if (!W || !H) return;
+    cam.aspect = W / H; cam.updateProjectionMatrix(); renderer.setSize(W, H, false);
+    // a narrower viewport needs the camera further back, or the board clips
+    const d = fit();
+    if (cam.position.length() < d) cam.position.setLength(d);
+    renderer.render(scene, cam);
+  }).observe(el);
+
+  renderer.render(scene, cam);      // first frame now, the rest on demand
+  kick();
+}
+
+// only build a viewer once the figure is actually on screen
+document.querySelectorAll('.v3d[data-model]').forEach(el => el.classList.add('trying'));
+
+const io = new IntersectionObserver((es, o) => es.forEach(e => {
+  if (e.isIntersecting) { o.unobserve(e.target); mount(e.target); }
+}), { rootMargin: '200px' });
+document.querySelectorAll('.v3d[data-model]').forEach(el => io.observe(el));
+</script>
+<script>
+// ---- stepper: main steps on top, sub steps inside a panel, Back / Next walk through all of them ----
+(function () {
+  var panels = [].slice.call(document.querySelectorAll('.panel'));
+  var bar = document.querySelector('.steps');
+  var back = document.querySelector('.nav .back'), next = document.querySelector('.nav .next');
+  var pages = [], seen = {}, cur = -1, top = [];
+  panels.forEach(function (p, i) {
+    var subs = [].slice.call(p.querySelectorAll(':scope > .sub'));
+    var b = document.createElement('button'); b.type = 'button';
+    b.innerHTML = '<span class="n">' + (i + 1) + '</span><span class="t">' + p.dataset.title + '</span>';
+    if (p.dataset.star) b.classList.add('star');
+    var first = pages.length;
+    b.onclick = function () { show(first, true); };
+    bar.appendChild(b); top.push(b);
+    if (!subs.length) { pages.push({ p: i, s: null, id: String(i + 1), title: p.dataset.title }); return; }
+    var nav = document.createElement('div'); nav.className = 'subnav';
+    subs.forEach(function (s, k) {
+      var id = (i + 1) + '.' + (k + 1), idx = pages.length;
+      var sb = document.createElement('button'); sb.type = 'button';
+      sb.textContent = id + ' ' + s.dataset.title;
+      sb.onclick = function () { show(idx, false); };
+      nav.appendChild(sb);
+      pages.push({ p: i, s: s, id: id, title: id + ' ' + s.dataset.title, btn: sb });
+    });
+    subs[0].parentNode.insertBefore(nav, subs[0]);
+  });
+  function show(n, scroll) {
+    n = Math.max(0, Math.min(pages.length - 1, n));
+    if (n === cur) return;
+    var prevPanel = cur >= 0 ? pages[cur].p : -1;
+    cur = n; seen[n] = 1;
+    var pg = pages[n];
+    panels.forEach(function (p, k) { p.hidden = k !== pg.p; });
+    pages.forEach(function (q, k) {
+      if (q.s && q.p === pg.p) q.s.hidden = q.s !== pg.s;
+      if (q.btn) { q.btn.classList.toggle('on', k === n); q.btn.classList.toggle('seen', !!seen[k] && k !== n); }
+    });
+    top.forEach(function (b, k) {
+      var visited = pages.some(function (q, j) { return q.p === k && seen[j]; });
+      b.classList.toggle('on', k === pg.p); b.classList.toggle('seen', visited && k !== pg.p);
+      if (k === pg.p) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+    });
+    back.disabled = n === 0;
+    next.disabled = n === pages.length - 1;
+    if (n < pages.length - 1) next.innerHTML = 'Next: ' + pages[n + 1].title + ' &#8594;';
+    if (history.replaceState) history.replaceState(null, '', '#' + pg.id);
+    top[pg.p].scrollIntoView({ block: 'nearest', inline: 'center' });
+    var panel = panels[pg.p];
+    if (scroll || pg.p !== prevPanel) window.scrollTo({ top: 0, behavior: 'smooth' });
+    else {
+      var nav = panel.querySelector('.subnav');
+      if (nav && nav.getBoundingClientRect().top < 0) nav.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
+  document.querySelectorAll('[data-go]').forEach(function (el) {
+    el.addEventListener('click', function () {
+      pages.forEach(function (q, k) { if (q.id === el.dataset.go) show(k, true); });
+    });
+  });
+  back.onclick = function () { show(cur - 1, false); };
+  next.onclick = function () { show(cur + 1, false); };
+  document.addEventListener('keydown', function (e) {
+    if (e.target.closest && e.target.closest('input, textarea')) return;
+    if (document.querySelector('dialog[open]')) return;
+    if (e.key === 'ArrowRight') show(cur + 1, false);
+    if (e.key === 'ArrowLeft') show(cur - 1, false);
+  });
+  var h = location.hash.replace('#', '').replace('step-', '');
+  var start = 0;
+  pages.forEach(function (q, k) { if (q.id === h) start = k; });
+  if (!/\./.test(h) && h) pages.forEach(function (q, k) { if (start === 0 && String(q.p + 1) === h) start = k; });
+  show(start, false);
+})();
+
+// ---- photo / video slots: show the file if it is there, a placeholder with its name if not ----
+(function () {
+  document.querySelectorAll('.media[data-src]').forEach(function (f) {
+    var src = f.dataset.src, video = f.dataset.kind === 'video';
+    var cap = f.querySelector('figcaption');
+    var el = document.createElement(video ? 'video' : 'img');
+    function missing() {
+      var ph = document.createElement('div'); ph.className = 'ph';
+      ph.innerHTML = '<b>' + (video ? 'Video' : 'Photo') + ' coming soon</b>' + src;
+      if (el.parentNode) el.parentNode.replaceChild(ph, el); else f.insertBefore(ph, cap);
+    }
+    if (video) {
+      el.controls = true; el.playsInline = true; el.preload = 'metadata'; el.muted = true;
+      var s = document.createElement('source'); s.src = src; s.onerror = missing; el.appendChild(s);
+    } else {
+      el.src = src; el.alt = cap ? cap.textContent : ''; el.loading = 'lazy'; el.onerror = missing;
+    }
+    f.insertBefore(el, cap);
+  });
+})();
+
+
+// ---- hero: a hand-annotated sketch of the coil signal on graph paper ----
+(function () {
+  var cv = document.getElementById('scope');
+  if (!cv || !cv.getContext) return;
+  var ctx = cv.getContext('2d');
+  var W = cv.width, H = cv.height, N = 600;
+  var L = 46, R = W - 14, T = 16, B = H - 40;          // plot box
+  function sig(x) {
+    var y = Math.exp(-Math.pow((x - 0.16) / 0.011, 2)) * 0.82;
+    var top = 0.42 * (1 - Math.exp(-0.36 / 0.035));
+    if (x > 0.36 && x < 0.72) y += 0.42 * (1 - Math.exp(-(x - 0.36) / 0.035));
+    if (x >= 0.72) y += top * Math.exp(-(x - 0.72) / 0.02);
+    y += Math.exp(-Math.pow((x - 0.87) / 0.0055, 2)) * 0.5;
+    return y;
+  }
+  var noise = []; for (var k = 0; k <= N; k++) noise.push((Math.random() - .5) * 0.028);
+  function tok(n, fb) { var v = getComputedStyle(document.documentElement).getPropertyValue(n).trim(); return v || fb; }
+  function px(x) { return L + x * (R - L); }
+  function py(y) { return B - 0.08 * (B - T) - y * (B - T) * 0.82; }
+  // label position and arrow ends, all in canvas px relative to the point on the trace
+  var notes = [
+    { x: 0.16, tx: 70, ty: -6, sx: -6, sy: -7, ex: 7, ey: 2 },
+    { x: 0.52, tx: -30, ty: 64, sx: 40, sy: -22, ex: 0, ey: 8 },
+    { x: 0.87, tx: -150, ty: -40, sx: 84, sy: -6, ex: -7, ey: -4 }
+  ];
+  var words = ['nozzle touches the bed', 'melt pressure builds', 'a knock'];
+  function arrow(x1, y1, x2, y2, c) {
+    ctx.strokeStyle = c; ctx.lineWidth = 1.6; ctx.beginPath();
+    var mx = (x1 + x2) / 2 + (y2 - y1) * 0.25, my = (y1 + y2) / 2 - (x2 - x1) * 0.25;
+    ctx.moveTo(x1, y1); ctx.quadraticCurveTo(mx, my, x2, y2); ctx.stroke();
+    var a = Math.atan2(y2 - my, x2 - mx);
+    ctx.beginPath(); ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - 9 * Math.cos(a - .45), y2 - 9 * Math.sin(a - .45));
+    ctx.moveTo(x2, y2); ctx.lineTo(x2 - 9 * Math.cos(a + .45), y2 - 9 * Math.sin(a + .45)); ctx.stroke();
+  }
+  function draw(upto) {
+    var ink = tok('--ink', '#15191c'), line = tok('--line', '#dfe3e5'), muted = tok('--muted', '#5b646b'), cu = tok('--copper', '#c35a22');
+    ctx.clearRect(0, 0, W, H);
+    ctx.lineWidth = 1; ctx.strokeStyle = line;
+    for (var gx = L; gx <= R + 1; gx += (R - L) / 16) { ctx.beginPath(); ctx.moveTo(gx, T); ctx.lineTo(gx, B); ctx.stroke(); }
+    for (var gy = B; gy >= T - 1; gy -= (B - T) / 8) { ctx.beginPath(); ctx.moveTo(L, gy); ctx.lineTo(R, gy); ctx.stroke(); }
+    ctx.strokeStyle = muted; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(L, T); ctx.lineTo(L, B); ctx.lineTo(R, B); ctx.stroke();
+    ctx.fillStyle = muted; ctx.font = '400 17px "IBM Plex Mono", ui-monospace, monospace';
+    ctx.textAlign = 'left'; ctx.fillText('time', R - 40, B + 26);
+    ctx.save(); ctx.translate(L - 16, T + 70); ctx.rotate(-Math.PI / 2); ctx.textAlign = 'right'; ctx.fillText('coil Hz', 0, 0); ctx.restore();
+    ctx.strokeStyle = ink; ctx.lineWidth = 2.2; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.beginPath();
+    for (var i = 0; i <= upto; i++) {
+      var x = i / N, X = px(x), Y = py(sig(x) + noise[i]);
+      if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+    }
+    ctx.stroke();
+    ctx.font = '600 28px Caveat, "Segoe Print", "Bradley Hand", cursive'; ctx.fillStyle = cu; ctx.textAlign = 'left';
+    notes.forEach(function (n, k) {
+      if (n.x * N > upto) return;
+      var X = px(n.x), Y = py(sig(n.x));
+      var lx = X + n.tx, ly = Y + n.ty;
+      ctx.fillText(words[k], lx, ly);
+      arrow(lx + n.sx, ly + n.sy, X + n.ex, Y + n.ey, cu);
+    });
+    if (upto < N) { ctx.fillStyle = cu; ctx.beginPath(); ctx.arc(px(upto / N), py(sig(upto / N) + noise[upto]), 4, 0, 7); ctx.fill(); }
+  }
+  var still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function start() {
+    draw(N);
+    if (still) return;
+    var t0 = null, dur = 6000, hold = 3500;
+    function frame(ts) {
+      if (cv.offsetParent === null || document.hidden) { t0 = null; setTimeout(function () { requestAnimationFrame(frame); }, 600); return; }
+      if (t0 === null) t0 = ts;
+      var t = ts - t0;
+      if (t < dur) draw(Math.floor(N * t / dur));
+      else if (t < dur + hold) draw(N);
+      else t0 = ts;
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(start, start); else start();
+  if (window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { draw(N); });
+})();
+
+// ---- copy button on every code block ----
+(function () {
+  var icon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>';
+  function fallback(text) {
+    var t = document.createElement('textarea'); t.value = text;
+    t.style.position = 'fixed'; t.style.opacity = '0'; document.body.appendChild(t);
+    t.select(); var ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(t); return ok;
+  }
+  document.querySelectorAll('.cb').forEach(function (cb) {
+    var b = document.createElement('button'); b.type = 'button'; b.className = 'copy';
+    b.innerHTML = icon + '<span>Copy</span>'; b.title = 'Copy to clipboard';
+    b.onclick = function () {
+      var text = cb.querySelector('pre').innerText.replace(/\s+$/, '') + '\n';
+      var done = function () {
+        b.classList.add('done'); b.lastChild.textContent = 'Copied';
+        setTimeout(function () { b.classList.remove('done'); b.lastChild.textContent = 'Copy'; }, 1500);
+      };
+      if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, function () { if (fallback(text)) done(); });
+      else if (fallback(text)) done();
+    };
+    cb.appendChild(b);
+  });
+})();
+
+// ---- click the wiring diagram to see it big ----
+(function () {
+  var wrap = document.querySelector('.wire .wrap');
+  if (!wrap || !window.HTMLDialogElement) return;
+  var dlg = document.createElement('dialog'); dlg.className = 'zoom';
+  document.body.appendChild(dlg);
+  wrap.addEventListener('click', function () {
+    var svg = wrap.querySelector('svg'); if (!svg) return;
+    dlg.innerHTML = ''; dlg.appendChild(svg.cloneNode(true)); dlg.showModal();
+  });
+  dlg.addEventListener('click', function () { dlg.close(); });
+})();
+
+// ---- if the 3D module never ran (no internet, old browser), say so instead of staying blank ----
+(function () {
+  var tries = 0;
+  var t = setInterval(function () {
+    var els = document.querySelectorAll('.v3d[data-model]');
+    var visible = [].filter.call(els, function (el) { return el.offsetParent !== null; });
+    if (!visible.length) return;
+    if (++tries < 6) return;
+    clearInterval(t);
+    visible.forEach(function (el) {
+      if (el.dataset.done) return;
+      el.classList.remove('trying');
+      var d = document.createElement('div'); d.className = 'why';
+      d.textContent = '3D viewer did not start (three.js could not be loaded). Showing the picture instead.';
+      el.appendChild(d);
+    });
+  }, 1000);
+})();
+</script>
+</body>
+</html>
