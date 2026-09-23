@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.9.6
+
+- At start the console says when a newer version is on GitHub (one `git ls-remote` in the background, `update_check: 0` turns it off)
+- `OZNLAB_CHECK` shows whether the installed version is the latest
+
 ## v0.9.5
 
 - `OZNLAB_SETUP` remembers the last step across the restart that `SAVE_CONFIG` does, and says where it continues (`RESET=1` starts over)

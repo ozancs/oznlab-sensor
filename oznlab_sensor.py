@@ -11,6 +11,7 @@
 #   reg_drive_current: 29
 #   data_rate: 200           # LDC samples/s; lower = finer resolution (400 -> 23 Hz steps, 200 -> 12, 100 -> 6)
 #   #verbose: 0              # 1 = per-step numbers on the console (always in klippy.log); VERBOSE=1 per command
+#   #update_check: 1         # at start, ask GitHub for a newer version and say so on the console (0 = off)
 #   #tap_sigma: 6.0          # arm threshold, x slew noise
 #   #amp_sigma: 5.0          # minimum event amplitude, x force noise
 #   #clog_mult: 8.0          # clog level = this x minimum amplitude
@@ -86,12 +87,18 @@
 #
 # Copyright (C) 2026  Ozan Sahin  <ozancsahin@gmail.com>
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import logging, math, os, re
+import logging, math, os, re, subprocess, threading, time
 from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.9.5"
+VERSION = "0.9.6"
+_UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
+
+
+def _vtuple(v):
+    try: return tuple(int(x) for x in v.split('.')[:3])
+    except ValueError: return (0, 0, 0)
 
 IDLE, EDGE, PRESS = 0, 1, 2
 
@@ -290,6 +297,8 @@ class OznLabSensor:
         # console: one short line per result; per-step numbers go to klippy.log, and to the
         # console too with verbose: 1 in the config or VERBOSE=1 on any command
         self.verbose = config.getboolean('verbose', False)
+        # once per Klipper start, ask GitHub (git ls-remote, in a background thread) for a newer tag
+        self.update_check = config.getboolean('update_check', True)
         # nozzle-tap bed mesh - the area is written by OZNLAB_MESH_SETUP (nozzle coordinates)
         self.mesh_min = config.getfloatlist('mesh_min', None, count=2)
         self.mesh_max = config.getfloatlist('mesh_max', None, count=2)
@@ -426,12 +435,63 @@ class OznLabSensor:
             logging.exception("oznlab %s: LDC1612 not responding", self.name)
 
     def _on_ready(self):
+        if self.update_check: self._upd_start()
         if self.saved_tap_z is None: return
         try:
             self.gcode.run_script("SET_GCODE_OFFSET Z=%.4f MOVE=0" % self.saved_tap_z)
             self.gcode.respond_info("OznLab: saved z offset %.3f applied" % self.saved_tap_z)
         except Exception:
             logging.exception("oznlab: could not apply the saved tap z offset")
+
+    # ================= update check =================
+    def _upd_start(self):
+        if _UPD['printer'] is self.printer: return      # one report per start, for every sensor
+        _UPD['printer'] = self.printer
+        if _UPD['latest'] is not None:        # known from before a RESTART: report it again
+            self._upd_done(_UPD['latest']); return
+        if _UPD['started']: return            # a check is still running
+        _UPD['started'] = True
+        repo = os.path.dirname(os.path.realpath(__file__))
+        if not os.path.exists(os.path.join(repo, '.git')): return     # not a git install
+        reactor = self.reactor
+        def work():
+            latest = None
+            for attempt in range(3):          # at boot the network may come up a little later
+                try:
+                    env = dict(os.environ, GIT_TERMINAL_PROMPT='0')
+                    out = subprocess.run(['git', 'ls-remote', '--tags', '--refs', 'origin'],
+                                         cwd=repo, env=env, stdout=subprocess.PIPE,
+                                         stderr=subprocess.DEVNULL, timeout=30).stdout
+                    vers = [tuple(int(x) for x in m) for m in re.findall(
+                        r'refs/tags/v(\d+)\.(\d+)\.(\d+)\s*$', out.decode('utf-8', 'replace'), re.M)]
+                    if vers: latest = max(vers); break
+                except Exception as e:
+                    logging.info("oznlab: update check failed (%s)", e)
+                time.sleep(60.)
+            _UPD['latest'] = latest; _UPD['started'] = False    # kept even if Klipper restarts meanwhile
+            reactor.register_async_callback(lambda et: self._upd_done(latest))
+        t = threading.Thread(target=work, name='oznlab-update')
+        t.daemon = True
+        t.start()
+
+    def _upd_done(self, latest):
+        _UPD['latest'] = latest
+        if latest is None:
+            logging.info("oznlab: update check: no answer from GitHub"); return
+        if latest > _vtuple(VERSION):
+            self.gcode.respond_info(
+                "OznLab Sensor v%s is available (installed v%s).\n"
+                "Update it in Mainsail / Fluidd: Update Manager, refresh, then Update on oznlab_sensor.\n"
+                "(Klipper restarts after the update, do it when not printing)"
+                % (".".join(map(str, latest)), VERSION))
+
+    def _upd_line(self):
+        latest = _UPD['latest']
+        if latest is None: return None
+        if latest > _vtuple(VERSION):
+            return ("  [WARN] v%s is available (installed v%s) - Update Manager in Mainsail / Fluidd"
+                    % (".".join(map(str, latest)), VERSION))
+        return "  [ OK ] latest version (v%s)" % VERSION
 
     # ================= capture (STATUS / STREAM) =================
     def _on_batch(self, msg, mine=None):
@@ -2269,6 +2329,8 @@ class OznLabSensor:
             miss = [c for c in ('OZNLAB_CALIBRATE_PA', 'OZNLAB_TAP', 'OZNLAB_MONITOR') if c not in have]
             if miss: L.append("  [WARN] PRINT_START does not call: %s" % ", ".join(miss))
             else: L.append("  [ OK ] PRINT_START calls CALIBRATE_PA, TAP and MONITOR")
+        u = self._upd_line()
+        if u: L.append(u)
         return ok, L
 
     cmd_CHECK_help = "OznLab Sensor health report (no motion): chip, frequency, noise, errors, config sanity"
