@@ -234,7 +234,8 @@
 
 <h3>What you need</h3>
 <ul class="check">
-  <li>The two boards: coil PCB and main PCB (assembled), plus two thin wires for the coil.</li>
+  <li>The two boards: coil PCB and main PCB (assembled), plus two thin wires for the coil. You order them from JLCPCB with the <a href="https://ozancsahin.gumroad.com/l/oznlabsensor">board files (Gerber, BOM, CPL)</a>.</li>
+  <li>A mount for the coil. The coil PCB is made for the RX toolhead, the version with the sensor mount will be on <a href="https://makerworld.com/en/@raidycv">raidycv's MakerWorld page</a>. Other toolheads: ask on <a href="https://discord.com/invite/MSKvKRJp8X">Discord</a>.</li>
   <li>A toolhead board with an I2C header. Tested on BTT EBB36 / EBB42 v1.1 and v1.2.</li>
   <li>A soldering iron for the JP1 address jumper and the coil wires.</li>
   <li>Klipper v0.13.0 or newer with Mainsail or Fluidd, and SSH access to the printer's computer. Z homing with the nozzle (optional) needs a Klipper from late May 2026 or newer, on the Pi and on the toolhead board.</li>
@@ -248,7 +249,7 @@
   <li><span><b>Print start</b>: two blocks for your PRINT_START and PRINT_END.</span></li>
   <li><span><b>Tools</b>: max flow, retraction, temperature, crash watch, nozzle mesh and homing.</span></li>
 </ol>
-<p><small>Every step says what to do, what you should see, and what to try if you don't. In this folder: <code>oznlab_sensor.py</code> (the module), <code>oznlab_sensor_config.cfg</code> (every option, commented), and <code>img/</code>, <code>video/</code>, <code>model/</code> for this page.</small></p>
+<p><small>Every step says what to do, what you should see, and what to try if you don't. In the <a href="https://github.com/ozancs/oznlab-sensor">GitHub repo</a>: <code>oznlab_sensor.py</code> (the module) and <code>config/oznlab_sensor.cfg</code> (every option, commented).</small></p>
 </section>
 
 <!-- ============================== 2 HARDWARE ============================== -->

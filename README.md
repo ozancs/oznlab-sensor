@@ -6,6 +6,13 @@ a Z offset, pressure advance and a clog / runout watch on every print.
 
 Step by step guide: https://ozancs.github.io/oznlab-sensor/
 
+## Hardware
+
+- Board files (Gerber, BOM, CPL for JLCPCB): https://ozancsahin.gumroad.com/l/oznlabsensor
+- The coil PCB is made for the RX toolhead. The version with the sensor mount will be published on
+  the designer's MakerWorld page: https://makerworld.com/en/@raidycv
+- Questions, other toolheads: https://discord.com/invite/MSKvKRJp8X
+
 ## Requirements
 
 - Klipper v0.13.0 or newer, Mainsail or Fluidd, SSH access.
