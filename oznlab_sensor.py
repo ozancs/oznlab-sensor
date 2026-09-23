@@ -38,6 +38,7 @@
 #                            # (leave 0 on a printer that already has a probe, e.g. a BTT Eddy)
 #   #home_trigger_frac: 0.5  #home_noise_sigma: 6  #home_lowpass: 12  #home_assume_sens: 1.5
 #   #mesh_samples: 2  #mesh_speed: 150  #mesh_travel_z: 2  #mesh_min_temp: 180  #mesh_profile:
+#   setup_step is written by OZNLAB_SETUP (so SAVE_CONFIG's restart does not lose your place)
 #   thermal_um_c / thermal_ref_t are written by OZNLAB_THERMAL_CAL - informational only, nothing
 #   applies them yet (tap at printing temperature and you do not need them)
 #
@@ -90,7 +91,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.9.4"
+VERSION = "0.9.5"
 
 IDLE, EDGE, PRESS = 0, 1, 2
 
@@ -376,7 +377,10 @@ class OznLabSensor:
         self._crash = None
         self.last_stats = None
         self.last_sens = None; self.last_sens_t = 0.
-        self._setup_step = 0
+        # setup progress survives the restart SAVE_CONFIG does (stored with the autosave values)
+        self._setup_step = config.getint('setup_step', 0, minval=0, maxval=8)
+        self._setup_saved = self._setup_step
+        self._setup_resume = 0 < self._setup_step < 8
         self._help = {}
         for cmd, func, desc in (('OZNLAB_STATUS', self.cmd_STATUS, self.cmd_STATUS_help),
                                 ('OZNLAB_STREAM', self.cmd_STREAM, self.cmd_STREAM_help),
@@ -2274,16 +2278,25 @@ class OznLabSensor:
 
     cmd_SETUP_help = "Guided first-time setup, one step per call: OZNLAB_SETUP [STEP=1..8] [RESET=1]"
     def cmd_SETUP(self, gcmd):
-        if gcmd.get_int('RESET', 0): self._setup_step = 0
-        step = gcmd.get_int('STEP', self._setup_step + 1, minval=1, maxval=8)
-        self._setup_step = step
         R = gcmd.respond_info
+        if gcmd.get_int('RESET', 0): self._setup_step = 0
+        resume = (self._setup_resume and gcmd.get('STEP', None) is None
+                  and not gcmd.get_int('RESET', 0))
+        self._setup_resume = False
+        step = gcmd.get_int('STEP', self._setup_step % 8 + 1, minval=1, maxval=8)
+        self._setup_step = step
+        self._setup_keep(step)
+        if resume:
+            R("Continuing the setup at step %d (OZNLAB_SETUP RESET=1 starts over, STEP=n jumps)" % step)
         th = self.printer.lookup_object('toolhead')
-        hot = self.printer.lookup_object('toolhead').get_extruder().get_status(
-            self.reactor.monotonic()).get('can_extrude', False)
+        ext = self.printer.lookup_object('toolhead').get_extruder()
+        hot = ext.get_status(self.reactor.monotonic()).get('can_extrude', False)
+        try: tmin = float(ext.get_heater().min_extrude_temp)
+        except Exception: tmin = 170.
         nxt = "\n  -> when done, run OZNLAB_SETUP for the next step"
         if step == 1:
             ok, lines = self._check(gcmd)
+            if not ok: self._setup_keep(0)
             R("STEP 1/8  WIRING AND SENSOR\n%s\n%s" % ("\n".join(lines),
               ("  Everything answers." + nxt) if ok else
               "  Fix the [FAIL] lines above, then run OZNLAB_SETUP STEP=1 again."))
@@ -2291,9 +2304,11 @@ class OznLabSensor:
             if not self.last_stats:            # after the restart SAVE_CONFIG did: measure now
                 self._check(gcmd)
             if not self.last_stats:
+                self._setup_keep(0)
                 R("STEP 2/8  DRIVE CURRENT\n  No data from the sensor - run OZNLAB_SETUP STEP=1 first."); return
             st = self.last_stats or {}
             if st.get('errors'):
+                self._setup_keep(1)
                 R("STEP 2/8  DRIVE CURRENT\n  The sensor reported errors. Run:\n"
                   "    LDC_CALIBRATE_DRIVE_CURRENT CHIP=%s\n    SAVE_CONFIG\n"
                   "  (the printer restarts) then run OZNLAB_SETUP STEP=2" % self.name)
@@ -2309,10 +2324,13 @@ class OznLabSensor:
                 "OZNLAB_WATCH", "OZNLAB_WATCH", {'DURATION': secs, 'SENSOR': self.name}))
         elif step == 4:
             if 'z' not in th.get_status(self.reactor.monotonic())['homed_axes']:
+                self._setup_keep(3)
                 R("STEP 4/8  TAP TEST\n  Home first (G28), move over the middle of the bed, then run OZNLAB_SETUP STEP=4"); return
             if not hot:
-                R("STEP 4/8  TAP TEST\n  Heat the nozzle to printing temperature first (the hotend must be hot,\n"
-                  "  it expands ~60 um between cold and hot), then run OZNLAB_SETUP STEP=4"); return
+                self._setup_keep(3)
+                R("STEP 4/8  TAP TEST\n  Heat the nozzle first: at least %.0f C, your printing temperature is best\n"
+                  "  (the hotend grows ~60 um from cold to hot, so tap at the temperature you print at),\n"
+                  "  then run OZNLAB_SETUP STEP=4" % tmin); return
             R("STEP 4/8  TAP TEST AND Z OFFSET")
             self.cmd_TAP(self.gcode.create_gcode_command(
                 "OZNLAB_TAP", "OZNLAB_TAP", {'SENSOR': self.name}))
@@ -2321,9 +2339,11 @@ class OznLabSensor:
               "  First layer too squished later? raise tap_adjust_z.%s" % nxt)
         elif step == 5:
             if not hot:
-                R("STEP 5/8  PRESSURE ADVANCE\n  Load filament and heat the nozzle to printing temperature,\n"
+                self._setup_keep(4)
+                R("STEP 5/8  PRESSURE ADVANCE\n  Load filament and heat the nozzle to its printing temperature\n"
+                  "  (at least %.0f C, e.g. PLA 210 C, PETG 240 C, ASA 250 C),\n"
                   "  move the nozzle over the purge bucket or a waste area (the Z lift is automatic),\n"
-                  "  then run OZNLAB_SETUP STEP=5"); return
+                  "  then run OZNLAB_SETUP STEP=5" % tmin); return
             R("STEP 5/8  PRESSURE ADVANCE (measures the melt pressure rise, applies nothing)")
             self._lift_clear(gcmd)
             self.cmd_CALIBRATE_PA(self.gcode.create_gcode_command(
@@ -2364,7 +2384,13 @@ class OznLabSensor:
               "  In PRINT_END and CANCEL_PRINT:\n"
               "    OZNLAB_PRINT_END\n"
               "  Done. OZNLAB_CHECK re-runs the health report any time.")
-            self._setup_step = 0
+
+    def _setup_keep(self, step):
+        # the last step done; kept by the next SAVE_CONFIG, so the restart it does resumes here
+        self._setup_step = step
+        if step != self._setup_saved:
+            self.printer.lookup_object('configfile').set(self.cfg_name, 'setup_step', str(step))
+            self._setup_saved = step
 
     def _setup_homing(self, gcmd, hot, nxt):
         """SETUP step 6, optional: home Z with the nozzle.
@@ -2382,10 +2408,12 @@ class OznLabSensor:
               "  (needs trigger_analog in the toolhead board's Klipper firmware; if Klipper then\n"
               "  refuses to start, remove the line again)%s" % (head, self.cfg_name, nxt)); return
         if not self._homed():
+            self._setup_keep(5)
             R("%s\n  Home first (G28), move the nozzle over the middle of the bed, then run "
               "OZNLAB_SETUP STEP=6" % head); return
         if (self._noz_temp() or 0.) < 140.:      # the tap needs soft plastic and a settled hotend
-            R("%s\n  Heat the nozzle first (150 C or printing temperature, tip clean), then run "
+            self._setup_keep(5)
+            R("%s\n  Heat the nozzle first (at least 140 C, 150 C is fine, tip clean), then run "
               "OZNLAB_SETUP STEP=6" % head); return
         ep = (self._cfg_settings('stepper_z').get('endstop_pin') or '')
         nozzle_homes = (self.z_homing_probe and self.printer.lookup_object('probe', None) is self.homing

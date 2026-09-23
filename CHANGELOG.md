@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.9.5
+
+- `OZNLAB_SETUP` remembers the last step across the restart that `SAVE_CONFIG` does, and says where it continues (`RESET=1` starts over)
+- A setup step that cannot run yet (not homed, nozzle cold, sensor errors) is repeated by the next `OZNLAB_SETUP` instead of skipped
+- The heat messages name the minimum nozzle temperature (the extruder's `min_extrude_temp` for the tap and PA steps, 140 C for Z homing)
+
 ## v0.9.4
 
 First public release.
