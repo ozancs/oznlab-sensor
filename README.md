@@ -9,8 +9,8 @@ Step by step guide: https://ozancs.github.io/oznlab-sensor/
 ## Hardware
 
 - Board files (Gerber, BOM, CPL for JLCPCB): https://ozancsahin.gumroad.com/l/oznlabsensor
-- The coil PCB is made for the RX toolhead. The version with the sensor mount will be published on
-  the designer's MakerWorld page: https://makerworld.com/en/@raidycv
+- The coil PCB is made for the RX toolhead: https://www.printables.com/model/1779906-rx-toolhead-v5-using-bambu-h2sa1-gear-h2d-hotend
+  The version with the sensor mount will be published there.
 - Questions, other toolheads: https://discord.com/invite/MSKvKRJp8X
 
 ## Requirements

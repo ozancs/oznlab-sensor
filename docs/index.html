@@ -208,7 +208,9 @@
   <div class="hero-text">
     <h1 class="wordmark">OznLab Sensor</h1>
     <p class="thesis">Your hotend, measured.</p>
-    <p>A small eddy current coil looks at the hotend heatsink. It feels the nozzle touch the bed and the melt pushing through the nozzle, a few microns at a time, and turns that into a Z offset, pressure advance and a clog watch on every print.</p>
+    <p>This is a small eddy current coil sensor that monitors your hotend in real time by detecting microscopic movements of the heatsink.</p>
+    <p>By analyzing these tiny movements, it can calculate critical information such as pressure advance and automatically apply the correct value at the start of your print.</p>
+    <p>It can also measure your Z offset by tapping the nozzle on the bed, watch for nozzle clogs during every print, and do a lot more that makes your printer smarter and more reliable.</p>
     <p class="cta"><button class="btn primary" type="button" data-go="2.1">Start the setup &#8594;</button> <button class="link" type="button" data-go="6.1">or jump to the tools</button></p>
   </div>
   <figure class="plot" aria-label="Sketch of the coil signal over time: a sharp spike when the nozzle touches the bed, a smooth rise while melt pressure builds, and a short spike from a knock.">
@@ -229,15 +231,15 @@
   <button class="row" type="button" data-go="6.3"><b>Temperature</b><span>Where more heat stops helping the flow.</span><code>OZNLAB_TEMP_SCAN</code></button>
   <button class="row" type="button" data-go="6.4"><b>Crash watch</b><span>Notices when the nozzle hits a curled part. Experimental.</span><code>OZNLAB_CRASH</code></button>
   <button class="row" type="button" data-go="6.5"><b>Nozzle bed mesh</b><span>A bed mesh measured by the nozzle itself, no probe needed.</span><code>OZNLAB_MESH</code></button>
-  <button class="row" type="button" data-go="6.6"><b>Nozzle Z homing</b><span>Home Z on the bed with the nozzle, no endstop needed.</span><code>OZNLAB_HOME_TEST</code></button>
+  <button class="row" type="button" data-go="6.6"><b>Nozzle Z homing</b><span>Home Z by tapping the bed with the nozzle. No endstop needed.</span><code>OZNLAB_HOME_TEST</code></button>
 </div>
 
 <h3>What you need</h3>
 <ul class="check">
   <li>The two boards: coil PCB and main PCB (assembled), plus two thin wires for the coil. You order them from JLCPCB with the <a href="https://ozancsahin.gumroad.com/l/oznlabsensor">board files (Gerber, BOM, CPL)</a>.</li>
-  <li>A mount for the coil. The coil PCB is made for the RX toolhead, the version with the sensor mount will be on <a href="https://makerworld.com/en/@raidycv">raidycv's MakerWorld page</a>. Other toolheads: ask on <a href="https://discord.com/invite/MSKvKRJp8X">Discord</a>.</li>
+  <li>A mount for the coil. The coil PCB is made for the RX toolhead, the <a href="https://www.printables.com/model/1779906-rx-toolhead-v5-using-bambu-h2sa1-gear-h2d-hotend">RX toolhead is on Printables</a> and the version with the sensor mount will be published there. Other toolheads: ask on <a href="https://discord.com/invite/MSKvKRJp8X">Discord</a>.</li>
   <li>A toolhead board with an I2C header. Tested on BTT EBB36 / EBB42 v1.1 and v1.2.</li>
-  <li>A soldering iron for the JP1 address jumper and the coil wires.</li>
+  <li>A soldering iron to solder a few pins: the JP1 address jumper and the coil wires.</li>
   <li>Klipper v0.13.0 or newer with Mainsail or Fluidd, and SSH access to the printer's computer. Z homing with the nozzle (optional) needs a Klipper from late May 2026 or newer, on the Pi and on the toolhead board.</li>
 </ul>
 
@@ -276,9 +278,9 @@
 <section class="sub" data-title="JP1 address" hidden>
 <h3>2.2 Solder the address jumper (JP1)</h3>
 <div class="note warn">JP1 must be soldered. Left open, the sensor does not answer.</div>
-<p>The sensor can use address <b>2A</b> or <b>2B</b>. Bridge the centre pad of JP1 to one of them with a blob of solder.</p>
+<p>The sensor talks to the toolhead board over I2C, and every device on the same I2C port needs its own address. JP1 sets this sensor's address: bridge the centre pad to <b>2A</b> or <b>2B</b> with a blob of solder.</p>
 <ul>
-  <li><b>With a BTT Eddy</b> on the same bus: choose <b>2B</b>.</li>
+  <li><b>Sharing the I2C port with a BTT Eddy:</b> bridge the centre pad to <b>2B</b>. The Eddy already uses the 2A address.</li>
   <li><b>With another I2C module</b> on the bus: look up its address and choose the pad that does not conflict with it.</li>
   <li><b>Nothing else</b> on the bus: either one works. 2B matches the config in this guide.</li>
 </ul>
