@@ -576,7 +576,7 @@ OznLab PA: measured ... (tau ... s) - not applied
 <div class="tw"><table class="fix">
 <tr><td><code>no pressure signal</code></td><td>No filament in the nozzle, or the nozzle is not hot.</td></tr>
 <tr><td><code>no reliable measurement</code></td><td>Run it again. Check that filament comes out while it runs.</td></tr>
-<tr><td><code>no reliable measurement</code>, and with <code>OZNLAB_CALIBRATE_PA APPLY=0 VERBOSE=1</code> the lines say <code>the rise overshoots and falls back</code></td><td>The extruder starts with a jerk, so the pressure build-up is not clean. Measure from the fall after the extruder stops instead: add <code>pa_method: decay</code> to <code>[oznlab_sensor hotend]</code>, restart Klipper, then do 4.5 and 4.6 again.</td></tr>
+<tr><td><code>no reliable measurement</code> again</td><td>Run <code>OZNLAB_CALIBRATE_PA APPLY=0 VERBOSE=1</code>: each line says why that run was ignored. Post the output on Discord.</td></tr>
 </table></div>
 <div class="note">Do not restart Klipper between this step and 4.6. The next step uses this measurement.</div>
 </section>

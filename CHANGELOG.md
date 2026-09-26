@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.9.8
+
+- `pa_method: decay` is now the default: pressure advance is measured from the pressure fall after the extruder stops. On both test printers it was repeatable within about 6 %, needs no primed melt zone and ignores gear slack at the start. The old method stays available as `pa_method: rise`
+- If you tuned `pa_scale` with v0.9.7 or older: measure once with `OZNLAB_CALIBRATE_PA` and run `OZNLAB_PA_SCALE PATTERN_PA=<your pattern value>` again (or add `pa_method: rise` to keep the old behaviour)
+- A rejected PA run says why (creeping rise, rise that overshoots, noisy rise or fall)
+
 ## v0.9.7
 
 - New option `pa_method: decay` (and `METHOD=decay` on `OZNLAB_CALIBRATE_PA`): measures the PA time constant from the pressure fall after the extruder stops, for extruders whose start is jerky. Default stays `rise`. Redo the PA pattern test after switching
