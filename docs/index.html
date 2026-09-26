@@ -176,6 +176,7 @@
 
   /* ---- wiring diagram ---- */
   .wire { margin: 22px 0 8px; }
+  .wire-all { margin-top: 36px; padding-top: 14px; border-top: 1px solid var(--line); }
   .wire .wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; text-align: center; }
   .wire svg { width: 100%; min-width: 660px; height: auto; }
   .wire .wrap, .wire .wrap svg { cursor: zoom-in; }
@@ -238,7 +239,7 @@
 <ul class="check">
   <li>The two boards: coil PCB and main PCB (assembled), plus two thin wires for the coil. You order them from JLCPCB with the <a href="https://ozancsahin.gumroad.com/l/oznlabsensor">board files (Gerber, BOM, CPL)</a>.</li>
   <li>A mount for the coil. The coil PCB is made for the RX toolhead, the <a href="https://www.printables.com/model/1779906-rx-toolhead-v5-using-bambu-h2sa1-gear-h2d-hotend">RX toolhead is on Printables</a> and the version with the sensor mount will be published there. Other toolheads: ask on <a href="https://discord.com/invite/MSKvKRJp8X">Discord</a>.</li>
-  <li>A toolhead board with an I2C header. Tested on BTT EBB36 / EBB42 v1.1 and v1.2.</li>
+  <li>A toolhead board with an I2C header. Tested on BTT EBB36 / EBB42 v1.1, v1.2 and GEN2.</li>
   <li>A soldering iron to solder a few pins: the JP1 address jumper and the coil wires.</li>
   <li>Klipper v0.13.0 or newer with Mainsail or Fluidd, and SSH access to the printer's computer. Z homing with the nozzle (optional) needs a Klipper from late May 2026 or newer, on the Pi and on the toolhead board.</li>
 </ul>
@@ -246,12 +247,12 @@
 <h3>The route</h3>
 <ol class="route">
   <li><span><b>Hardware</b>: solder, mount and wire the two boards.</span></li>
-  <li><span><b>Install</b>: copy the module, paste the config.</span></li>
+  <li><span><b>Install</b>: run the install script, paste the config.</span></li>
   <li><span><b>Setup</b>: six short checks from the console.</span></li>
   <li><span><b>Print start</b>: two blocks for your PRINT_START and PRINT_END.</span></li>
   <li><span><b>Tools</b>: max flow, retraction, temperature, crash watch, nozzle mesh and homing.</span></li>
 </ol>
-<p><small>Every step says what to do, what you should see, and what to try if you don't. In the <a href="https://github.com/ozancs/oznlab-sensor">GitHub repo</a>: <code>oznlab_sensor.py</code> (the module) and <code>config/oznlab_sensor.cfg</code> (every option, commented).</small></p>
+<p><small>Every step says what to do, what you should see, and what to try if you don't. In the <a href="https://github.com/ozancs/oznlab-sensor">GitHub repo</a>: <code>oznlab_sensor.py</code> (the Klipper script) and <code>config/oznlab_sensor.cfg</code> (every option, commented).</small></p>
 </section>
 
 <!-- ============================== 2 HARDWARE ============================== -->
@@ -272,17 +273,17 @@
   <span class="dim">15.96 &#215; 18.46 mm &#183; 1.6 mm thick</span></figcaption>
 </figure>
 </div>
-<p><small>Drag to rotate. The 3D view needs the <code>model/</code> folder next to this file and a web server; opened straight from disk you see the picture instead.</small></p>
+<p><small>Drag to rotate.</small></p>
 </section>
 
 <section class="sub" data-title="JP1 address" hidden>
 <h3>2.2 Solder the address jumper (JP1)</h3>
-<div class="note warn">JP1 must be soldered. Left open, the sensor does not answer.</div>
+<div class="note warn"><b>Note:</b> JP1 must be soldered. If you leave it open, the sensor will not work.</div>
 <p>The sensor talks to the toolhead board over I2C, and every device on the same I2C port needs its own address. JP1 sets this sensor's address: bridge the centre pad to <b>2A</b> or <b>2B</b> with a blob of solder.</p>
 <ul>
   <li><b>Sharing the I2C port with a BTT Eddy:</b> bridge the centre pad to <b>2B</b>. The Eddy already uses the 2A address.</li>
-  <li><b>With another I2C module</b> on the bus: look up its address and choose the pad that does not conflict with it.</li>
-  <li><b>Nothing else</b> on the bus: either one works. 2B matches the config in this guide.</li>
+  <li><b>Sharing the I2C port with another I2C device:</b> look up its address and pick the pad it does not use.</li>
+  <li><b>Nothing else on the I2C port:</b> either one works. 2B matches the config in this guide.</li>
 </ul>
 <div class="tw"><table>
 <tr><th>JP1</th><th>in the config (step 3.2)</th></tr>
@@ -294,14 +295,15 @@
 
 <section class="sub" data-title="Coil cable" hidden>
 <h3>2.3 Coil cable</h3>
-<p>Solder two wires from the coil pads to <b>A</b> and <b>B</b> on the main PCB. Either way round. Make them long enough to reach, and as short as practical.</p>
+<p>Solder two wires from the coil pads to <b>A</b> and <b>B</b> on the main PCB. It does not matter which wire goes to A and which to B. Make them just long enough to reach.</p>
 <figure class="media" data-src="img/coil_cable.jpg"><figcaption>Two wires soldered to the coil pads. Their other ends go to A and B on the main PCB.</figcaption></figure>
 </section>
 
 <section class="sub" data-title="Mount the coil" hidden>
 <h3>2.4 Mount the coil</h3>
-<p>Mount the coil PCB facing the hotend's aluminium heatsink, close to it but not touching. The coil must not move or vibrate; glue it if needed.</p>
-<figure class="media" data-src="img/coil_cable.jpg"><figcaption>Coil glued into its printed mount, facing where the heatsink sits.</figcaption></figure>
+<p>Mount the coil PCB facing the hotend's aluminium heatsink, close to it but not touching. The coil must not move or vibrate. The RX toolhead mount holds it without glue; on a mount of your own, glue it if needed.</p>
+<p><b>Which side faces the heatsink?</b> Either side works, the coil is on both layers of the PCB. Keep the side with the soldered wires away from the heatsink, so the wires stay out of the gap. If you flip the coil later, run the drive current step (4.2) again.</p>
+<figure class="media" data-src="img/coil_cable.jpg"><figcaption>An early prototype mount. The RX toolhead mount holds the coil without glue.</figcaption></figure>
 <figure class="media" data-src="video/coil_mount.mp4" data-kind="video"><figcaption>Mounting the coil, step by step.</figcaption></figure>
 <p><small>You check this for real in step 4.3: pushing the nozzle up must show up in the console.</small></p>
 </section>
@@ -310,6 +312,22 @@
 <h3>2.5 Connect to the toolhead board</h3>
 <p>Fix the main PCB on the toolhead with the two M2 holes. Then four wires, SCL, SDA, GND and 5V, from the main PCB to the I2C header of the toolhead board.</p>
 
+
+
+<div class="tw"><table>
+<tr><th>Board</th><th></th><th>I2C header</th><th><code>i2c_bus</code></th></tr>
+<tr><td><b>EBB36 / EBB42 CAN v1.1, v1.2</b></td><td><span class="pill ok">tested</span></td><td>1 = +5V<br>2 = GND<br>3 = PB3 (SCL)<br>4 = PB4 (SDA)</td><td><code>i2c3_PB3_PB4</code></td></tr>
+<tr><td><b>EBB36 / EBB42 GEN2</b></td><td><span class="pill ok">tested</span></td><td>5V, GND, PA7 (SCL), PA6 (SDA)</td><td><code>i2c3_PA7_PA6</code><br><small>toolhead firmware from Aug 2025 or newer</small></td></tr>
+<tr><td><b>EBB36 / EBB42 CAN v1.0</b></td><td><span class="pill warn">not tested</span></td><td>5V, GND, PB6 (SCL), PB7 (SDA)</td><td><code>i2c1_PB6_PB7</code></td></tr>
+</table></div>
+<p>On v1.1 / v1.2, PB3 and PB4 are also the filament sensor pins, so do not define a filament sensor on them.</p>
+<p><b>Other boards:</b> connect SCL, SDA, 5V and GND to the board's I2C pins and set <code>i2c_mcu</code> / <code>i2c_bus</code> for those pins. Step 4.1 shows if the sensor is found.</p>
+<p><b>With a BTT Eddy:</b> connect both to the same header in parallel (SCL to SCL, SDA to SDA, GND to GND, 5V to 5V).</p>
+<figure class="media" data-src="img/toolhead_wiring.jpg"><figcaption>Main PCB wired to the EBB36 I2C header.</figcaption></figure>
+</section>
+
+<div class="wire-all">
+<h3>Wiring at a glance</h3>
 <figure class="wire">
 <div class="wrap">
 <svg viewBox="0 0 796 500" role="img"
@@ -366,9 +384,9 @@
     <text x="198" y="84" font-size="10" fill="currentColor" opacity=".65">solder</text>
     <path d="M196 80 L182 72" stroke="currentColor" stroke-width="1" opacity=".45" fill="none"/>
     <text x="36" y="146" font-size="10.5" fill="currentColor" opacity=".9">Solder the centre pad to <tspan font-weight="600">2A</tspan> or <tspan font-weight="600">2B</tspan>.</text>
-    <text x="36" y="161" font-size="10.5" fill="currentColor" opacity=".72">With a BTT Eddy on the same bus: <tspan font-weight="600">2B</tspan>.</text>
+    <text x="36" y="161" font-size="10.5" fill="currentColor" opacity=".72">Sharing the I2C port with a BTT Eddy: <tspan font-weight="600">2B</tspan>.</text>
     <text x="36" y="176" font-size="10.5" fill="currentColor" opacity=".72">2B = i2c_address: 43, 2A = 42.</text>
-    <text x="36" y="191" font-size="10.5" fill="currentColor" opacity=".72">Left open, the sensor does not answer.</text>
+    <text x="36" y="191" font-size="10.5" fill="currentColor" opacity=".72">Note: if left open, the sensor will not work.</text>
     <text x="36" y="213" font-size="10.5" font-weight="600" fill="var(--accent)">Details in step 2.2.</text>
   </g>
 </svg>
@@ -376,26 +394,15 @@
 <p class="hint">click the diagram to enlarge</p>
 <figcaption>The four wires do not run straight across: the main PCB header reads SCL, SDA, GND, VIN from left to right, the EBB36 I2C connector reads +5V, GND, SCL, SDA. Follow the colours, not the positions.</figcaption>
 </figure>
-
-<div class="tw"><table>
-<tr><th>Board</th><th></th><th>I2C header</th><th><code>i2c_bus</code></th></tr>
-<tr><td><b>EBB36 / EBB42 CAN v1.1, v1.2</b></td><td><span class="pill ok">tested</span></td><td>1 = +5V<br>2 = GND<br>3 = PB3 (SCL)<br>4 = PB4 (SDA)</td><td><code>i2c3_PB3_PB4</code></td></tr>
-<tr><td><b>EBB36 / EBB42 GEN2</b></td><td><span class="pill warn">not tested</span></td><td>5V, GND, PA7 (SCL), PA6 (SDA)</td><td><code>i2c3_PA7_PA6</code><br><small>toolhead firmware from Aug 2025 or newer</small></td></tr>
-<tr><td><b>EBB36 / EBB42 CAN v1.0</b></td><td><span class="pill warn">not tested</span></td><td>5V, GND, PB6 (SCL), PB7 (SDA)</td><td><code>i2c1_PB6_PB7</code></td></tr>
-</table></div>
-<p>On v1.1 / v1.2, PB3 and PB4 are also the filament sensor pins, so do not define a filament sensor on them.</p>
-<p><b>Other boards:</b> connect SCL, SDA, 5V and GND to the board's I2C pins and set <code>i2c_mcu</code> / <code>i2c_bus</code> for those pins. Step 4.1 tells you if it answers.</p>
-<p><b>With a BTT Eddy:</b> connect both to the same header in parallel (SCL to SCL, SDA to SDA, GND to GND, 5V to 5V).</p>
-<figure class="media" data-src="img/toolhead_wiring.jpg"><figcaption>Main PCB wired to the EBB36 I2C header.</figcaption></figure>
-</section>
+</div>
 </section>
 
 <!-- ============================== 3 INSTALL ============================== -->
 <section class="panel" data-title="Install" hidden>
 <h2><span class="num">3</span>Install</h2>
 
-<section class="sub" data-title="Install the module">
-<h3>3.1 Install the module</h3>
+<section class="sub" data-title="Install the script">
+<h3>3.1 Install the script</h3>
 <p>Connect to the printer with SSH, as your normal user (no <code>sudo</code>), and run:</p>
 <p class="lbl run">Run (SSH)</p>
 <div class="cb"><pre><code>cd ~
@@ -439,8 +446,11 @@ runout_gcode: PAUSE</code></pre></div>
 
 <section class="sub" data-title="stepper_z" hidden>
 <h3>3.3 Change position_min in [stepper_z]</h3>
-<p>The tap moves slightly below zero, so this has to be negative. Find <code>position_min</code> in your <code>[stepper_z]</code> section and set it to:</p>
-<div class="cb"><pre><code>position_min: -1</code></pre></div>
+<p>The tap moves slightly below zero, so this has to be negative. This is in your own <code>[stepper_z]</code> section in printer.cfg, not in the OznLab section. Find <code>position_min</code> there and set it to <code>-1</code>. If the line is missing, add it:</p>
+<p class="where">in <code>[stepper_z]</code></p>
+<div class="cb"><pre><code>[stepper_z]
+# ... your other [stepper_z] lines stay as they are ...
+position_min: -1</code></pre></div>
 <p><small>If you skip this, step 4.1 reports it as a <code>[FAIL]</code>.</small></p>
 </section>
 
@@ -452,8 +462,8 @@ runout_gcode: PAUSE</code></pre></div>
 <p>Klipper comes back to <b>Ready</b> in Mainsail / Fluidd, and <code>OZNLAB_HELP</code> in the console lists the commands.</p>
 <p class="lbl bad">If not</p>
 <div class="tw"><table class="fix">
-<tr><td><code>Unknown command: OZNLAB_HELP</code></td><td>install.sh from 3.1 did not run, or Klipper was restarted with <code>FIRMWARE_RESTART</code>. That does not load a new module; use the command above.</td></tr>
-<tr><td><code>Section 'oznlab_sensor hotend' is not a valid config section</code></td><td>Same as above: Klipper does not see the module.</td></tr>
+<tr><td><code>Unknown command: OZNLAB_HELP</code></td><td>install.sh from 3.1 did not run, or Klipper was restarted with <code>FIRMWARE_RESTART</code>. That does not load a new script; use the command above.</td></tr>
+<tr><td><code>Section 'oznlab_sensor hotend' is not a valid config section</code></td><td>Same as above: Klipper does not see the script.</td></tr>
 <tr><td>Klipper error mentioning the MCU name</td><td><code>i2c_mcu</code> does not match the name of your <code>[mcu ...]</code> section.</td></tr>
 <tr><td>Klipper error mentioning <code>i2c_bus</code></td><td>The bus name does not exist on that MCU. Check step 2.5.</td></tr>
 </table></div>
@@ -468,8 +478,10 @@ runout_gcode: PAUSE</code></pre></div>
 <section class="sub" data-title="Health check">
 <h3>4.1 Health check</h3>
 <p>Everything from here is typed into the Mainsail / Fluidd console. Nothing moves in this step.</p>
+<p><code>OZNLAB_SETUP</code> goes one step further each time you run it and remembers where you are, even after <code>SAVE_CONFIG</code> restarts Klipper. Its steps 1 to 5 are steps 4.1 to 4.5 of this guide. To repeat or jump to a step, add <code>STEP=</code>, for example <code>OZNLAB_SETUP STEP=3</code>.</p>
 <p class="lbl run">Run</p>
-<div class="cb"><pre><code>OZNLAB_SETUP STEP=1</code></pre></div>
+<div class="cb"><pre><code>OZNLAB_SETUP</code></pre></div>
+<p><small>Same as <code>OZNLAB_SETUP STEP=1</code>, which runs this step again any time.</small></p>
 <p class="lbl ok">You should see</p>
 <pre class="out">STEP 1/8  WIRING AND SENSOR
   [ OK ] LDC1612 answers (id 5449/3055)
@@ -479,8 +491,8 @@ runout_gcode: PAUSE</code></pre></div>
 <p>Two <code>[WARN]</code> lines are normal at this point: <code>reg_drive_current not set yet</code> (fixed in 4.2) and <code>PRINT_START does not call ...</code> (fixed in step 5).</p>
 <p class="lbl bad">If not</p>
 <div class="tw"><table class="fix">
-<tr><td><code>[FAIL] sensor does not answer on I2C</code></td><td>Check the four wires against the colours in 2.5, that JP1 is soldered, and that <code>i2c_address</code> matches JP1 (2B = 43, 2A = 42).</td></tr>
-<tr><td><code>[FAIL] wrong chip id</code></td><td>Another device answers on that address. Use the other JP1 pad and change <code>i2c_address</code>.</td></tr>
+<tr><td><code>[FAIL] sensor does not answer on I2C</code></td><td>Check the four wires against the wiring diagram in step 2, that JP1 is soldered, and that <code>i2c_address</code> matches JP1 (2B = 43, 2A = 42).</td></tr>
+<tr><td><code>[FAIL] wrong chip id</code></td><td>Another device already uses that address. Solder JP1 to the other pad and change <code>i2c_address</code>.</td></tr>
 <tr><td><code>[FAIL] no samples arrived</code></td><td>Restart Klipper (3.4) and run again.</td></tr>
 <tr><td><code>[WARN] f0 outside the usual 2-4 MHz</code></td><td>The coil is not connected. Check the solder joints on A, B and the coil pads.</td></tr>
 <tr><td><code>[FAIL] ... conversion errors</code></td><td>Do step 4.2.</td></tr>
@@ -491,12 +503,13 @@ runout_gcode: PAUSE</code></pre></div>
 
 <section class="sub" data-title="Drive current" hidden>
 <h3>4.2 Drive current</h3>
-<p>Klipper sets how hard the coil is driven. Do this once.</p>
+<p>Klipper sets how hard the coil is driven. Do this once, with the coil mounted in its final place: the right value depends on the distance to the heatsink.</p>
 <p class="lbl run">Run</p>
 <div class="cb"><pre><code>LDC_CALIBRATE_DRIVE_CURRENT CHIP=hotend
 SAVE_CONFIG</code></pre></div>
 <p>Klipper restarts after <code>SAVE_CONFIG</code>. Then:</p>
-<div class="cb"><pre><code>OZNLAB_SETUP STEP=2</code></pre></div>
+<div class="cb"><pre><code>OZNLAB_SETUP</code></pre></div>
+<p><small>Same as <code>OZNLAB_SETUP STEP=2</code>, which runs this step again any time.</small></p>
 <p class="lbl ok">You should see</p>
 <pre class="out">STEP 2/8  DRIVE CURRENT
   [ OK ] no conversion errors, drive current is fine.</pre>
@@ -510,7 +523,8 @@ SAVE_CONFIG</code></pre></div>
 <h3>4.3 Does the coil feel the hotend?</h3>
 <p>The console listens for 25 s. Keep your hands off for the first 3 s, then push the nozzle <b>up</b> with a finger three times, short pushes.</p>
 <p class="lbl run">Run</p>
-<div class="cb"><pre><code>OZNLAB_SETUP STEP=3</code></pre></div>
+<div class="cb"><pre><code>OZNLAB_SETUP</code></pre></div>
+<p><small>Same as <code>OZNLAB_SETUP STEP=3</code>, which runs this step again any time.</small></p>
 <p class="lbl ok">You should see</p>
 <pre class="out">oznlab watch: 25 s - hold still 3 s for calibration, then tap
 TAP #1  peak ... Hz  slew ... Hz/s  ... ms
@@ -529,8 +543,9 @@ TAP #3  ...</pre>
 <h3>4.4 Tap test and Z offset</h3>
 <div class="need"><b>Before:</b> home (<code>G28</code>), heat the nozzle to printing temperature, clean the tip, move over the middle of the bed.</div>
 <p class="lbl run">Run</p>
-<div class="cb"><pre><code>OZNLAB_SETUP STEP=4
+<div class="cb"><pre><code>OZNLAB_SETUP
 SAVE_CONFIG</code></pre></div>
+<p><small>Same as <code>OZNLAB_SETUP STEP=4</code>, which runs this step again any time.</small></p>
 <p>The nozzle taps the bed a few times and sets the Z offset. <code>SAVE_CONFIG</code> keeps it and restarts Klipper.</p>
 <p class="lbl ok">You should see</p>
 <pre class="out">STEP 4/8  TAP TEST AND Z OFFSET
@@ -549,7 +564,8 @@ OznLab tap: z offset ... set (5 taps within ... mm) - SAVE_CONFIG to keep it</pr
 <h3>4.5 Pressure advance: measure</h3>
 <div class="need"><b>Before:</b> filament loaded, nozzle at printing temperature, nozzle over the purge area or anywhere plastic can drop. It lifts Z by itself.</div>
 <p class="lbl run">Run</p>
-<div class="cb"><pre><code>OZNLAB_SETUP STEP=5</code></pre></div>
+<div class="cb"><pre><code>OZNLAB_SETUP</code></pre></div>
+<p><small>Same as <code>OZNLAB_SETUP STEP=5</code>, which runs this step again any time.</small></p>
 <p>It extrudes a little filament in the air, about 10 s.</p>
 <p class="lbl ok">You should see</p>
 <pre class="out">STEP 5/8  PRESSURE ADVANCE (measures the melt pressure rise, applies nothing)
@@ -560,6 +576,7 @@ OznLab PA: measured ... (tau ... s) - not applied
 <div class="tw"><table class="fix">
 <tr><td><code>no pressure signal</code></td><td>No filament in the nozzle, or the nozzle is not hot.</td></tr>
 <tr><td><code>no reliable measurement</code></td><td>Run it again. Check that filament comes out while it runs.</td></tr>
+<tr><td><code>no reliable measurement</code>, and with <code>OZNLAB_CALIBRATE_PA APPLY=0 VERBOSE=1</code> the lines say <code>the rise overshoots and falls back</code></td><td>The extruder starts with a jerk, so the pressure build-up is not clean. Measure from the fall after the extruder stops instead: add <code>pa_method: decay</code> to <code>[oznlab_sensor hotend]</code>, restart Klipper, then do 4.5 and 4.6 again.</td></tr>
 </table></div>
 <div class="note">Do not restart Klipper between this step and 4.6. The next step uses this measurement.</div>
 </section>

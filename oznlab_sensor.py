@@ -26,6 +26,8 @@
 #   #pa_scale: 0.175         # PA = rise tau * pa_scale  (per filament: OZNLAB_PA_SCALE PATTERN_PA=... TYPE=...)
 #   #pa_prime: 12.0          # mm extruded before measuring (refills the melt zone emptied by ooze)
 #   #pa_tau_max: 0.4         # fits above this (creeping rise) are rejected
+#   #pa_method: rise         # rise | decay: measure tau from the pressure build-up or from the fall after
+#                            # the extruder stops (decay: for extruders with a jerky start; redo the PA pattern test)
 #   #flow_exp: 0.6           # pressure ~ speed^flow_exp (fitted automatically when SPEEDS has 2+ values)
 #   #clog_ratio: 2.0  #runout_ratio: 0.25  #confirm_windows: 3  #confirm_time: 10  #monitor_min_z: 0.5
 #   #baseline_max_drift: 3   # Hz/s safety creep of the baseline while extruding (drift itself is learned from idle moments)
@@ -51,7 +53,7 @@
 #   OZNLAB_TAP [SAMPLES=5] [DISCARD=1] [SPEED=2] [START=2.0] [TARGET=-0.3] [ADJUST=0] [APPLY=1] [SAVE=1]
 #        nozzle-on-bed tap at the current XY: descends from START to the hard limit TARGET,
 #        finds the contact point from the frequency kink, sets SET_GCODE_OFFSET Z=contact+ADJUST
-#   OZNLAB_CALIBRATE_PA [SPEEDS=3] [DURATION=1.5] [SAMPLES=1] [DISCARD=1] [PRIME=12] [RETRIES=2] [SCALE=] [APPLY=1] [FILE=]
+#   OZNLAB_CALIBRATE_PA [SPEEDS=3] [DURATION=1.5] [SAMPLES=1] [DISCARD=1] [PRIME=12] [RETRIES=2] [SCALE=] [APPLY=1] [METHOD=] [FILE=]
 #        extrusion step in the air, fits the pressure rise tau, SET_PRESSURE_ADVANCE tau*pa_scale (not saved)
 #   OZNLAB_PA_SCALE PATTERN_PA=<value> [TYPE=]  one-time per filament: pa_scale from a slicer PA pattern test
 #   OZNLAB_MONITOR | OFF=1 | STATUS=1 | LOG=file.csv   clog / runout watch (reference = last CALIBRATE_PA)
@@ -92,7 +94,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.9.6"
+VERSION = "0.9.7"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -349,6 +351,9 @@ class OznLabSensor:
         self._job = None; self._last_job = None; self._job_timer = None
         self.last_tap_z = None; self.last_pa = None
         self.pa_prime = config.getfloat('pa_prime', 12.0, minval=0., maxval=50.)    # mm extruded first: refill the melt zone after ooze
+        # rise: tau from the pressure build-up (default). decay: tau from the fall after the extruder
+        # stops - for extruders whose start is jerky (gear slack, stick-slip) but whose stop is clean
+        self.pa_method = config.getchoice('pa_method', {'rise': 'rise', 'decay': 'decay'}, 'rise')
         self.pa_tau_max = config.getfloat('pa_tau_max', 0.4, above=0.05)           # fits above this are rejected (melt zone not primed)
         self.pa_cal = None                                     # last calibration result (for clog reference)
         # print monitor (clog / runout) - reference comes from the last OZNLAB_CALIBRATE_PA
@@ -1035,6 +1040,30 @@ class OznLabSensor:
         sse, tau, td, A, B, n = best
         return tau, td, A, B, math.sqrt(max(sse, 0.) / max(n, 1))
 
+    @staticmethod
+    def _fit_decay(rec, t1, P):
+        """tau of the fall after the extruder stops -> (tau, r2) or None. The signal settles to a
+        level that is not exactly the old baseline, so the fall is taken relative to where it ends:
+        x = (f - f_end) / (f_start - f_end), log-linear LSQ on 0.1 < x < 0.9."""
+        tail = [f for t, f in rec if t1 + 1.5 <= t <= t1 + 2.1]
+        head = [f for t, f in rec if t1 - 0.15 <= t <= t1 - 0.01]
+        if len(tail) < 10 or len(head) < 5: return None
+        f_end = sum(tail) / len(tail); f_start = sum(head) / len(head)
+        span = f_start - f_end
+        if abs(span) < 0.5 * abs(P): return None
+        pts = [(t - t1, math.log((f - f_end) / span)) for t, f in rec
+               if t1 <= t <= t1 + 1.0 and 0.1 < (f - f_end) / span < 0.9]
+        n = len(pts)
+        if n < 6: return None
+        sx = sum(q[0] for q in pts); sy = sum(q[1] for q in pts)
+        sxx = sum(q[0] * q[0] for q in pts); sxy = sum(q[0] * q[1] for q in pts)
+        syy = sum(q[1] * q[1] for q in pts)
+        den = n * sxx - sx * sx; vy = n * syy - sy * sy
+        if den <= 0. or vy <= 0.: return None
+        slope = (n * sxy - sx * sy) / den
+        if slope >= 0.: return None
+        return -1. / slope, (n * sxy - sx * sy) ** 2 / (den * vy)
+
     def _pa_analyze(self, rec, t0, t1):
         """rec: (t, f) samples; t0/t1: print time of extruder speed step up / down"""
         base = [f for t, f in rec if t0 - 0.45 <= t <= t0 - 0.05]
@@ -1062,7 +1091,7 @@ class OznLabSensor:
 
     cmd_CALIBRATE_PA_help = ("Measure melt pressure rise time and set pressure advance (not saved): "
                              "OZNLAB_CALIBRATE_PA [SPEEDS=3] [DURATION=1.5] [SAMPLES=1] [DISCARD=1] "
-                             "[PRIME=12] [RETRIES=2] [SCALE=] [APPLY=1] [FILE=]  (SCALE defaults to this filament's pa_scale)")
+                             "[PRIME=12] [RETRIES=2] [SCALE=] [APPLY=1] [METHOD=rise|decay] [FILE=]  (SCALE defaults to this filament's pa_scale)")
     def cmd_CALIBRATE_PA(self, gcmd):
         toolhead = self.printer.lookup_object('toolhead')
         self._free(gcmd, "pa")
@@ -1081,6 +1110,9 @@ class OznLabSensor:
             if not (j is not None and j.get('warned') == self.filament):   # FILAMENT said it already
                 gcmd.respond_info(self._scale_warning())
         apply = gcmd.get_int('APPLY', 1)
+        method = gcmd.get('METHOD', self.pa_method).lower()
+        if method not in ('rise', 'decay'):
+            raise gcmd.error("oznlab pa: METHOD must be rise or decay")
         retries = gcmd.get_int('RETRIES', 2, minval=0, maxval=4)
         fname = gcmd.get('FILE', None)                 # optional raw dump: run,speed,time,frequency
         extruder = toolhead.get_extruder()
@@ -1131,6 +1163,18 @@ class OznLabSensor:
                           for t, f in rec: fh.write("%d,%.2f,%.4f,%.4f,%.4f,%.2f\n" % (run, v, t0, t1, t, f))
                       try:
                           P, tau_r, td, tau_d, fit, fb = self._pa_analyze(rec, t0, t1)
+                          if method == 'decay':
+                              dec = self._fit_decay(rec, t1, P)
+                              if dec is None:
+                                  raise gcmd.error("could not fit the pressure fall")
+                              tag = "(priming, ignored)" if i < discard else ""
+                              bad = dec[0] > self.pa_tau_max or dec[1] < 0.93
+                              if bad and i >= discard: tag = "(UNRELIABLE - noisy fall, ignored)"
+                              if i >= discard and not bad: results.append((v, P, dec[0], dec[0], fb))
+                              self._detail(gcmd, "oznlab pa %.1f mm/s: step %.0f Hz  fall tau %.4f s  fit r2 %.3f  "
+                                           "(rise tau %s) %s" % (v, P, dec[0], dec[1],
+                                           "%.4f s" % tau_r if tau_r is not None else "n/a", tag))
+                              continue
                           if tau_r is None:
                               raise gcmd.error("could not fit the pressure rise")
                       except self.gcode.error as e:
@@ -1144,7 +1188,10 @@ class OznLabSensor:
                       # creep is Hz/s, so compare it over the actual measurement window
                       bad = (tau_r > self.pa_tau_max or abs(B) * secs > 0.20 * abs(A)
                              or rms > 0.06 * abs(A) + 40.)
-                      if bad and i >= discard: tag = "(UNRELIABLE - creeping rise, melt zone not primed? ignored)"
+                      if bad and i >= discard:
+                          tag = ("(UNRELIABLE - creeping rise, melt zone not primed? ignored)" if B * A > 0 else
+                                 "(UNRELIABLE - the rise overshoots and falls back, jerky extruder start? "
+                                 "try pa_method: decay - ignored)")
                       if i >= discard and not bad: results.append((v, A, tau_r, tau_d, fb))
                       self._detail(gcmd, "oznlab pa %.1f mm/s: step %.0f Hz  rise tau %.4f s  delay %.3f s  "
                                    "creep %.0f Hz/s  fit rms %.0f Hz  decay tau %s %s"
@@ -1200,7 +1247,7 @@ class OznLabSensor:
                            % (pa_new, tau, scale, (" for %s" % self._fil_disp()) if scale_known and self.filament
                               else "" if scale_known else ", default"))
         else:
-            gcmd.respond_info("OznLab PA: measured %.4f (tau %.3f s) - not applied" % (pa_new, tau))
+            gcmd.respond_info("OznLab PA: measured %.4f (tau %.3f s, %s) - not applied" % (pa_new, tau, method))
 
     # ---- filament of the current print and its pa_scale ----
     @staticmethod
@@ -2272,7 +2319,7 @@ class OznLabSensor:
         if st['rate'] < 0.7 * exp:
             L.append("  [WARN] sample rate %.0f/s is below the configured %d - I2C is the bottleneck, try i2c_speed: 400000" % (st['rate'], exp))
         # 3 - config sanity
-        if self._cfg_raw(self.cfg_name).get('reg_drive_current') is None:
+        if self._cfg_raw(self.cfg_name).get('reg_drive_current') is None and not st['errors']:   # the [FAIL] above already says it
             L.append("  [WARN] reg_drive_current not set yet - run LDC_CALIBRATE_DRIVE_CURRENT CHIP=%s + SAVE_CONFIG" % self.name)
         zmin = None
         try:

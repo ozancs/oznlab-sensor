@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.9.7
+
+- New option `pa_method: decay` (and `METHOD=decay` on `OZNLAB_CALIBRATE_PA`): measures the PA time constant from the pressure fall after the extruder stops, for extruders whose start is jerky. Default stays `rise`. Redo the PA pattern test after switching
+- A rejected PA run now says whether the rise creeps or overshoots and falls back
+- `OZNLAB_CHECK` / setup step 1: when the sensor reports conversion errors, only the [FAIL] line tells you to run `LDC_CALIBRATE_DRIVE_CURRENT` (the same advice is no longer repeated as a [WARN])
+- Guide: new intro, JP1 explained, wiring diagram on every hardware step, which coil side faces the heatsink, `OZNLAB_SETUP` without STEP= in the setup steps, `[stepper_z]` example for position_min, RX toolhead on Printables
+
 ## v0.9.6
 
 - At start the console says when a newer version is on GitHub (one `git ls-remote` in the background, `update_check: 0` turns it off)
