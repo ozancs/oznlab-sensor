@@ -26,8 +26,9 @@
 #   #pa_scale: 0.175         # PA = rise tau * pa_scale  (per filament: OZNLAB_PA_SCALE PATTERN_PA=... TYPE=...)
 #   #pa_prime: 12.0          # mm extruded before measuring (refills the melt zone emptied by ooze)
 #   #pa_tau_max: 0.4         # fits above this (creeping rise) are rejected
-#   #pa_method: decay        # decay | rise: measure tau from the pressure fall after the extruder stops
-#                            # (default) or from the build-up. Changing it needs the PA pattern test again
+#   #pa_method: decay        # decay | fast | rise: tau from the pressure fall after the extruder stops
+#                            # (default), from only the fast part of that fall (large nozzles, runny
+#                            # filaments), or from the build-up. Changing it needs the PA pattern test again
 #   #flow_exp: 0.6           # pressure ~ speed^flow_exp (fitted automatically when SPEEDS has 2+ values)
 #   #clog_ratio: 2.0  #runout_ratio: 0.25  #confirm_windows: 3  #confirm_time: 10  #monitor_min_z: 0.5
 #   #baseline_max_drift: 3   # Hz/s safety creep of the baseline while extruding (drift itself is learned from idle moments)
@@ -354,7 +355,7 @@ class OznLabSensor:
         # decay (default): tau from the pressure fall after the extruder stops - the gear holds the
         # filament there, so gear slack / stick-slip at the start does not matter and it needs no
         # primed melt zone. rise: tau from the build-up (the method before v0.9.8)
-        self.pa_method = config.getchoice('pa_method', {'rise': 'rise', 'decay': 'decay'}, 'decay')
+        self.pa_method = config.getchoice('pa_method', {'rise': 'rise', 'decay': 'decay', 'fast': 'fast'}, 'decay')
         self.pa_tau_max = config.getfloat('pa_tau_max', 0.4, above=0.05)           # fits above this are rejected (melt zone not primed)
         self.pa_cal = None                                     # last calibration result (for clog reference)
         # print monitor (clog / runout) - reference comes from the last OZNLAB_CALIBRATE_PA
@@ -1065,6 +1066,60 @@ class OznLabSensor:
         if slope >= 0.: return None
         return -1. / slope, (n * sxy - sx * sy) ** 2 / (den * vy)
 
+    @staticmethod
+    def _solve4(M, v):
+        n = len(v); A = [row[:] + [v[i]] for i, row in enumerate(M)]
+        for i in range(n):
+            p = max(range(i, n), key=lambda r: abs(A[r][i]))
+            if abs(A[p][i]) < 1e-12: return None
+            A[i], A[p] = A[p], A[i]
+            for r in range(n):
+                if r != i:
+                    k = A[r][i] / A[i][i]
+                    for c in range(i, n + 1): A[r][c] -= k * A[i][c]
+        return [A[i][n] / A[i][i] for i in range(n)]
+
+    @classmethod
+    def _fit_fast(cls, rec, t1):
+        """fast part of the fall after the extruder stops -> (tau_fast, share, rms) or None.
+        Model y = A1 e^(-t/tau1) + A2 e^(-t/tau2) + c + d*t: a fast melt drop, a slow tail
+        (heat, parts settling) and a drift. Large nozzles / runny filaments drop in 10-30 ms,
+        followed by a tail of seconds; only the fast part is used."""
+        pts = [(t - t1, f) for t, f in rec if t1 - 0.002 <= t <= t1 + 2.0]
+        if len(pts) < 20: return None
+        # full resolution for the first 0.3 s, thinned tail (keeps the grid fast at 400 sps)
+        head = [q for q in pts if q[0] <= 0.3]; tail = [q for q in pts if q[0] > 0.3]
+        step = max(1, len(tail) // 120)
+        pts = head + tail[::step]
+        best = None
+        for k in range(60):
+            a = 0.004 * (150. ** (k / 59.))            # 4 ms .. 0.6 s
+            for m in (3., 5., 8., 13., 20., 35., 60.):
+                b = a * m
+                if b > 8.: continue
+                S = [[0.] * 4 for _ in range(4)]; v = [0.] * 4; yy = 0.
+                for t, f in pts:
+                    u = max(t, 0.)
+                    x = (math.exp(-u / a), math.exp(-u / b), 1., t)
+                    for i in range(4):
+                        v[i] += x[i] * f
+                        for j in range(4): S[i][j] += x[i] * x[j]
+                    yy += f * f
+                sol = cls._solve4(S, v)
+                if sol is None: continue
+                sse = yy - sum(sol[i] * v[i] for i in range(4))
+                tot = sol[0] + sol[1]
+                share = sol[0] / tot if tot != 0. else 0.
+                # a plain single-exponential fall fits equally well as "tiny fast part + slow
+                # part"; only fits where the fast part carries a real share of the fall count
+                if not 0.25 <= share <= 1.05: continue
+                if best is None or sse < best[0]: best = (sse, a, sol)
+        if best is None: return None
+        sse, a, sol = best
+        A1, A2 = sol[0], sol[1]
+        if A1 + A2 == 0.: return None
+        return a, A1 / (A1 + A2), math.sqrt(max(sse, 0.) / len(pts))
+
     def _pa_analyze(self, rec, t0, t1):
         """rec: (t, f) samples; t0/t1: print time of extruder speed step up / down"""
         base = [f for t, f in rec if t0 - 0.45 <= t <= t0 - 0.05]
@@ -1092,7 +1147,7 @@ class OznLabSensor:
 
     cmd_CALIBRATE_PA_help = ("Measure melt pressure rise time and set pressure advance (not saved): "
                              "OZNLAB_CALIBRATE_PA [SPEEDS=3] [DURATION=1.5] [SAMPLES=1] [DISCARD=1] "
-                             "[PRIME=12] [RETRIES=2] [SCALE=] [APPLY=1] [METHOD=rise|decay] [FILE=]  (SCALE defaults to this filament's pa_scale)")
+                             "[PRIME=12] [RETRIES=2] [SCALE=] [APPLY=1] [METHOD=decay|fast|rise] [FILE=]  (SCALE defaults to this filament's pa_scale)")
     def cmd_CALIBRATE_PA(self, gcmd):
         toolhead = self.printer.lookup_object('toolhead')
         self._free(gcmd, "pa")
@@ -1112,8 +1167,8 @@ class OznLabSensor:
                 gcmd.respond_info(self._scale_warning())
         apply = gcmd.get_int('APPLY', 1)
         method = gcmd.get('METHOD', self.pa_method).lower()
-        if method not in ('rise', 'decay'):
-            raise gcmd.error("oznlab pa: METHOD must be rise or decay")
+        if method not in ('rise', 'decay', 'fast'):
+            raise gcmd.error("oznlab pa: METHOD must be decay, fast or rise")
         retries = gcmd.get_int('RETRIES', 2, minval=0, maxval=4)
         fname = gcmd.get('FILE', None)                 # optional raw dump: run,speed,time,frequency
         extruder = toolhead.get_extruder()
@@ -1164,6 +1219,27 @@ class OznLabSensor:
                           for t, f in rec: fh.write("%d,%.2f,%.4f,%.4f,%.4f,%.2f\n" % (run, v, t0, t1, t, f))
                       try:
                           P, tau_r, td, tau_d, fit, fb = self._pa_analyze(rec, t0, t1)
+                          if method == 'fast':
+                              fa = self._fit_fast(rec, t1)
+                              if fa is None:
+                                  raise gcmd.error("could not fit the pressure fall")
+                              tag = "(priming, ignored)" if i < discard else ""
+                              dt_s = 1. / max(self.sensor.data_rate, 1)
+                              if abs(P) < 350.:
+                                  why = "pressure step too small, raise pa_speed"
+                              elif fa[0] < 1.5 * dt_s:
+                                  why = "the drop is faster than data_rate %d can see" % self.sensor.data_rate
+                              elif not 0.25 <= fa[1] <= 1.05:
+                                  why = "no clear fast drop"
+                              elif fa[2] > 0.08 * abs(P) + 30.:
+                                  why = "noisy fall"
+                              else:
+                                  why = None
+                              if why and i >= discard: tag = "(UNRELIABLE - %s, ignored)" % why
+                              if i >= discard and not why: results.append((v, P, fa[0], fa[0], fb))
+                              self._detail(gcmd, "oznlab pa %.1f mm/s: step %.0f Hz  fast tau %.4f s  (%.0f%% of the fall)  "
+                                           "fit rms %.0f Hz %s" % (v, P, fa[0], fa[1] * 100., fa[2], tag))
+                              continue
                           if method == 'decay':
                               dec = self._fit_decay(rec, t1, P)
                               if dec is None:

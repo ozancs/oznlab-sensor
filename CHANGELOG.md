@@ -5,6 +5,8 @@
 - `pa_method: decay` is now the default: pressure advance is measured from the pressure fall after the extruder stops. On both test printers it was repeatable within about 6 %, needs no primed melt zone and ignores gear slack at the start. The old method stays available as `pa_method: rise`
 - If you tuned `pa_scale` with v0.9.7 or older: measure once with `OZNLAB_CALIBRATE_PA` and run `OZNLAB_PA_SCALE PATTERN_PA=<your pattern value>` again (or add `pa_method: rise` to keep the old behaviour)
 - A rejected PA run says why (creeping rise, rise that overshoots, noisy rise or fall)
+- New `pa_method: fast`: uses only the fast part of the pressure fall. For large nozzles (0.6 mm and up) and runny filaments, where the melt pressure drops in 10 to 30 ms and a slow tail follows. Tested on recorded data from a 0.6 mm nozzle (PETG at 3 mm/s, PLA at 6 mm/s, data_rate 100)
+- PA runs whose drop is faster than the sensor's data_rate, or whose pressure step is too small, now say so
 
 ## v0.9.7
 
