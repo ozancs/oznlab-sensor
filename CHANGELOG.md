@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.9.9
+
+- New default `pa_method: auto`: the first PA measurement fits every run with decay, and with fast when decay does not fit, keeps the method with more good runs and saves it (`SAVE_CONFIG` keeps it). Tested on recorded data: a slow hotend picks decay, a hotend whose pressure drops in 15 to 20 ms picks fast. A `pa_method` line in your config is left alone
+- `OZNLAB_PA_SCALE` also stores the method it was measured with, so a scale and its method always match
+- "no reliable measurement" now lists the reasons in the same line, for example `(noisy fall x3, no pressure signal x2)`, without VERBOSE=1
+- The fast fit lets Klipper's other timers run while it computes
+- `OZNLAB_HELP`: words in [ ] are optional, type them without the brackets
+- Guide: nozzle homing config in one block, "home first (G28)" in the fix table, redo the PA steps after a nozzle or hotend change
+
 ## v0.9.8
 
 - `pa_method: decay` is now the default: pressure advance is measured from the pressure fall after the extruder stops. On both test printers it was repeatable within about 6 %, needs no primed melt zone and ignores gear slack at the start. The old method stays available as `pa_method: rise`

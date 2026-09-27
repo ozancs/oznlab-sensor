@@ -568,15 +568,17 @@ OznLab tap: z offset ... set (5 taps within ... mm) - SAVE_CONFIG to keep it</pr
 <p><small>Same as <code>OZNLAB_SETUP STEP=5</code>, which runs this step again any time.</small></p>
 <p>It extrudes a little filament in the air, about 10 s.</p>
 <p class="lbl ok">You should see</p>
-<pre class="out">STEP 5/8  PRESSURE ADVANCE (measures the melt pressure rise, applies nothing)
-OznLab PA: measured ... (tau ... s) - not applied
+<pre class="out">STEP 5/8  PRESSURE ADVANCE (measures the melt pressure, applies nothing)
+OznLab PA: this hotend fits the ... method, pa_method: ... saved (SAVE_CONFIG to keep it)
+OznLab PA: measured ... (tau ... s, ...) - not applied
   ...
   measured tau = ... s, so pa_scale = PATTERN_PA / ...</pre>
+<p>The first measurement also picks the method that fits your hotend: <code>decay</code> for a slow pressure fall, <code>fast</code> for a hotend that drops the pressure within a few hundredths of a second. The <code>SAVE_CONFIG</code> in 4.6 keeps it.</p>
 <p class="lbl bad">If not</p>
 <div class="tw"><table class="fix">
 <tr><td><code>no pressure signal</code></td><td>No filament in the nozzle, or the nozzle is not hot.</td></tr>
 <tr><td><code>no reliable measurement</code></td><td>Run it again. Check that filament comes out while it runs.</td></tr>
-<tr><td><code>no reliable measurement</code> again</td><td>Run <code>OZNLAB_CALIBRATE_PA APPLY=0 VERBOSE=1</code>: each line says why that run was ignored. Post the output on Discord.</td></tr>
+<tr><td><code>no reliable measurement</code> again</td><td>The reasons are in brackets in the same line. Run <code>OZNLAB_CALIBRATE_PA APPLY=0 VERBOSE=1</code> for the numbers of each run and post the output on Discord.</td></tr>
 </table></div>
 <div class="note">Do not restart Klipper between this step and 4.6. The next step uses this measurement.</div>
 </section>
@@ -594,13 +596,14 @@ OznLab PA: measured ... (tau ... s) - not applied
 SAVE_CONFIG</code></pre></div>
 <p>Use the filament type as the slicer names it, for example <code>TYPE=PLA</code> or <code>TYPE=ASA</code>. Each filament type gets its own scale (<code>pa_scale_pla</code>, <code>pa_scale_asa</code> ...). Repeat this step once for every filament type you print.</p>
 <p class="lbl ok">You should see</p>
-<pre class="out">OznLab: pa_scale_asa ... (= ... / tau ...), for ASA - SAVE_CONFIG to keep it</pre>
+<pre class="out">OznLab: pa_scale_asa ... (= ... / tau ..., pa_method ...), for ASA - SAVE_CONFIG to keep it</pre>
 <p>This command only does the math. It does not print or move anything.</p>
 <p class="lbl bad">If not</p>
 <div class="tw"><table class="fix">
 <tr><td><code>run OZNLAB_CALIBRATE_PA first</code></td><td>Klipper was restarted after 4.5. Do 4.5 again, then this command. No need to print the pattern again.</td></tr>
 <tr><td><code>computed pa_scale ... is out of range</code></td><td>Check the value you typed, then do 4.5 again.</td></tr>
 </table></div>
+<div class="note">Changed the nozzle or the hotend? Do 4.5 and this step again for every filament. The scale belongs to one filament on one nozzle.</div>
 <div class="note">In the slicer's filament profile, turn <b>"Enable pressure advance"</b> off. From now on PA is measured at the start of every print, and the slicer would overwrite it.</div>
 <p><small><code>OZNLAB_SETUP</code> steps 6 to 8: Z homing with the nozzle (optional, step 6.6 of this guide), the bed mesh options (step 6.5) and the PRINT_START lines (next step).</small></p>
 </section>
@@ -799,6 +802,27 @@ home_xy_position: &lt;bed_center_x&gt;, &lt;bed_center_y&gt;
 z_hop: 5</code></pre></div>
 <div class="note">Klipper allows one probe. If you have another one, disable its section <b>and</b> delete its <code>#*#</code> lines at the bottom of printer.cfg (keep a backup). Only commenting those lines out makes Klipper ignore the whole saved block.</div>
 
+<p class="lbl use">All together</p>
+<p>After step 2 these are the only lines that change. Everything else in those sections stays as it is.</p>
+<div class="cb"><pre><code>[oznlab_sensor hotend]
+# your other lines stay
+z_homing: 1
+z_homing_probe: 1
+
+[stepper_z]
+# step_pin, dir_pin, rotation_distance etc. stay
+# delete position_endstop (and homing_positive_dir if you have it)
+endstop_pin: probe:z_virtual_endstop
+homing_speed: 3
+homing_retract_dist: 0
+position_min: -1
+
+# only if you have no [safe_z_home] or [homing_override]
+[safe_z_home]
+home_xy_position: &lt;bed_center_x&gt;, &lt;bed_center_y&gt;
+z_hop: 5</code></pre></div>
+<p><small>Keep <code>z_homing: 1</code>: <code>z_homing_probe: 1</code> needs it.</small></p>
+
 <p class="lbl run">3. Store the Z offset</p>
 <p>Restart Klipper, <code>G28</code> (now with the nozzle), heat the nozzle, then:</p>
 <div class="cb"><pre><code>OZNLAB_SETUP STEP=6
@@ -807,6 +831,7 @@ SAVE_CONFIG</code></pre></div>
 <p class="lbl bad">If not</p>
 <div class="tw"><table class="fix">
 <tr><td><code>too close to the noise floor</code></td><td>Heat the nozzle. The sensor is less sensitive cold, and the command refuses to move rather than risk a missed trigger.</td></tr>
+<tr><td><code>home first (G28)</code> right after G28</td><td>Z did not home. Read what <code>G28</code> printed in the console, and compare your config with the block above.</td></tr>
 <tr><td><code>stopped late</code> (0.3 mm or more)</td><td>Check that the coil cannot move, heat the nozzle, run again.</td></tr>
 </table></div>
 <p><small>On our printer: the trigger stops 0.05 to 0.09 mm past contact at 3 mm/s. Three G28 in a row with the nozzle put Z 0 within 0.007 mm of each other and within 0.01 mm of the tap contact.</small></p>
