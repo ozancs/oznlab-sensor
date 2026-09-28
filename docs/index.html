@@ -617,34 +617,35 @@ OznLab: pa_scale_asa ... (= ... / tau ..., pa_method ...), for ASA - SAVE_CONFIG
 
 <section class="sub" data-title="PRINT_START">
 <h3>5.1 PRINT_START</h3>
-<p>Put this in your <b>PRINT_START</b> macro, after the nozzle has reached printing temperature and before the prime line:</p>
-<div class="cb"><pre><code>    # no probe? load the nozzle mesh first (step 6.5)
-    #BED_MESH_PROFILE LOAD=default
+<p><b>1.</b> Open <code>printer.cfg</code> and find your <code>[gcode_macro PRINT_START]</code>. Add this line after the line that heats the nozzle (<code>M109</code>) and before the prime line:</p>
+<div class="cb"><pre><code>    OZNLAB_PRINT_START</code></pre></div>
+<p><b>2.</b> At the end of the same macro, as the last line:</p>
+<div class="cb"><pre><code>    OZNLAB_MONITOR</code></pre></div>
+<p>That is all for most printers. At every print the first line reads the filament type from the gcode file, measures pressure advance in the air over the front left corner of the bed, waits 15 s and taps the bed centre for the Z offset. <code>OZNLAB_MONITOR</code> watches for clogs and runout.</p>
 
-    OZNLAB_PRINT_START</code></pre></div>
-<p>That one line reads the filament type from the gcode file (OrcaSlicer, PrusaSlicer, SuperSlicer and Bambu Studio write it), measures pressure advance in the air over the front left corner of the bed, waits 15 s for the hotend to settle and taps the bed centre for the Z offset. Purge bucket? <code>PA_X=</code> <code>PA_Y=</code> put the PA measurement there. <code>TAP_X</code> / <code>TAP_Y</code> pick another tap spot, <code>SETTLE=</code> another wait.</p>
-<p class="lbl use">A whole PRINT_START, as an example</p>
-<p>Your own macro has other names and steps; the OznLab lines are the three marked ones. This printer has a purge bucket at X250 Y5 and homes with the eddy probe.</p>
+<p class="lbl use">Optional: purge bucket</p>
+<p>These are not typed in the console. They go into printer.cfg, in the <code>[oznlab_sensor hotend]</code> section, next to the lines already there. Use your own coordinates:</p>
+<p class="where">in <code>[oznlab_sensor hotend]</code></p>
+<div class="cb"><pre><code>pa_x: 260
+pa_y: 240</code></pre></div>
+<p><small>Where the PA test extrudes: over a purge bucket, or anywhere plastic can drop. Save the file and restart Klipper.</small></p>
+
+<p class="lbl use">What it looks like</p>
+<p>An example PRINT_START. Yours has other lines and that is fine; only the two OznLab lines are new.</p>
 <div class="cb"><pre><code>[gcode_macro PRINT_START]
 gcode:
     {% set bed = params.BED|default(60)|float %}
     {% set extruder = params.EXTRUDER|default(215)|float %}
     G28
     M190 S{bed}
-    BED_MESH_CALIBRATE                       ; or BED_MESH_PROFILE LOAD=default
+    BED_MESH_CALIBRATE
     M109 S{extruder}
-    OZNLAB_PRINT_START PA_X=250 PA_Y=5       ; OznLab 1: filament, PA over the bucket, tap
-    G1 X5 Y5 Z0.3 F6000                      ; your prime line
+    OZNLAB_PRINT_START          ; new
+    G1 X5 Y5 Z0.3 F6000         ; your prime line
     G1 X100 E15 F1200
-    OZNLAB_MONITOR                           ; OznLab 2: clog / runout watch
-    #OZNLAB_CRASH                            ; OznLab 3: crash watch, when you want it</code></pre></div>
-<p><small>No bucket: leave <code>PA_X</code> and <code>PA_Y</code> away, the PA filament drops on the front left corner of the bed and the prime line runs over it. Slicer PRINT_START line: <code>PRINT_START BED=[bed_temperature_initial_layer_single] EXTRUDER=[nozzle_temperature_initial_layer]</code> (Orca), no FILAMENT needed.</small></p>
-<p><small>Cura, or the filament type is not in your files? In the slicer's start G-code add <code>FILAMENT={filament_type[initial_extruder]}</code> (Orca syntax) to the PRINT_START line and pass it on: <code>OZNLAB_PRINT_START FILAMENT="{params.FILAMENT|default('')}"</code>.</small></p>
+    OZNLAB_MONITOR              ; new, last line</code></pre></div>
+<p><small>No probe? Put <code>BED_MESH_PROFILE LOAD=default</code> where <code>BED_MESH_CALIBRATE</code> is (step 6.5). Crash watch: add <code>OZNLAB_CRASH</code> after <code>OZNLAB_MONITOR</code> (step 6.4). Cura does not write the filament type into the file: see the Troubleshooting table.</small></p>
 <p>If a filament has no scale of its own yet, the console says so at the start of the print and the default <code>pa_scale</code> is used.</p>
-<p>Then your prime line, and as the <b>last lines</b> of PRINT_START:</p>
-<div class="cb"><pre><code>    OZNLAB_MONITOR
-    #OZNLAB_CRASH</code></pre></div>
-<p><small>Remove the <code>#</code> in front of <code>OZNLAB_CRASH</code> to turn on the crash watch (step 6.4). Prefer separate lines? <code>OZNLAB_FILAMENT</code>, <code>OZNLAB_CALIBRATE_PA</code> and <code>OZNLAB_TAP SAVE=0</code> still work on their own.</small></p>
 </section>
 
 <section class="sub" data-title="PRINT_END" hidden>
@@ -886,7 +887,7 @@ SAVE_CONFIG</code></pre></div>
 
 <div class="tw"><table>
 <tr><th>Command</th><th>What it does</th></tr>
-<tr><td><code>OZNLAB_MENU</code></td><td>Popup with all the tools as buttons (Mainsail and Fluidd), grouped in four pages.</td></tr>
+<tr><td><code>OZNLAB_MENU</code></td><td>Popup with every tool as a button (Mainsail and Fluidd): one page each for Z offset, pressure advance, bed mesh, Z homing, and setup and tests. Every page says what each button does. "All commands" lists the console commands by group.</td></tr>
 <tr><td><code>OZNLAB_PRINT_START</code></td><td>Filament, pressure advance, settle and tap in one line (step 5.1).</td></tr>
 <tr><td><code>OZNLAB_PRINT_END</code></td><td>Stops the clog / runout and crash watch (step 5.2).</td></tr>
 <tr><td><code>OZNLAB_SETUP</code></td><td>Guided setup, one step per call.</td></tr>
@@ -916,6 +917,8 @@ SAVE_CONFIG</code></pre></div>
 <p>Every step above has its own <b>If not</b> list. These are the common ones in one place.</p>
 <div class="tw"><table>
 <tr><th>You see</th><th>Try</th></tr>
+<tr><td><code>OznLab filament: unknown (no TYPE, none in the gcode file)</code></td><td>Your slicer does not write the filament type (Cura). In the slicer's start G-code call <code>PRINT_START FILAMENT=PLA</code> (or its variable for the filament type), and in the macro use <code>OZNLAB_PRINT_START FILAMENT="{params.FILAMENT|default('')}"</code>.</td></tr>
+<tr><td><code>Unknown command: "PA_X=260"</code></td><td><code>pa_x</code> and <code>pa_y</code> are config lines, not console commands: see step 5.1.</td></tr>
 <tr><td><code>Unknown command: OZNLAB_...</code></td><td><code>install.sh</code> from step 3.1 did not run, or Klipper was not restarted with <code>sudo systemctl restart klipper</code>.</td></tr>
 <tr><td><code>there is no [mcu EBBCan] in your config</code></td><td><code>i2c_mcu</code> must be the name of your toolhead board's <code>[mcu ...]</code> section. The message lists the names you have.</td></tr>
 <tr><td><code>Unknown i2c_bus '...'</code></td><td>Wrong bus name for this board (table in step 2.5), or the toolhead board runs older Klipper firmware than the bus needs. Flash it with the current Klipper.</td></tr>

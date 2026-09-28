@@ -16,6 +16,7 @@
 #   #amp_sigma: 5.0          # minimum event amplitude, x force noise
 #   #clog_mult: 8.0          # clog level = this x minimum amplitude
 #   #tap_adjust_z: 0.04      # added to the measured contact Z (your squish preference)
+#   #pa_x: / #pa_y:          # where OZNLAB_PRINT_START measures PA (purge bucket); empty = front left corner
 #   #tap_target_z: -0.3      # hard lower limit of the tap descent (never below this)
 #   #tap_samples: 5          # measurements per OZNLAB_TAP (plus 1 priming tap)
 #   #tap_speed: 2.0  #tap_start_z: 2.0   # descent speed (mm/s, clamped to max_z_velocity) and start height
@@ -98,7 +99,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.9.12"
+VERSION = "0.9.13"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -310,7 +311,13 @@ class OznLabSensor:
         self.tap_target_z = config.getfloat('tap_target_z', -0.3, minval=-0.6, maxval=0.0)
         self.tap_speed = config.getfloat('tap_speed', 2.0, above=0.2, maxval=10.)
         self.tap_start_z = config.getfloat('tap_start_z', 2.0, above=0.5, maxval=10.)
+        # soft taps: the fit gets its samples within this many mm past the contact (smaller = less
+        # push on the bed, the descent gets slower to keep the sample count). SOFT= on OZNLAB_TAP.
+        self.tap_soft = 0.1
+        self._last_contact = None          # (x, y, z) of the last tap run: the next first tap is soft too
         self.tap_samples = config.getint('tap_samples', 5, minval=1, maxval=10)
+        # where OZNLAB_PRINT_START measures PA (purge bucket); empty = front left corner of the bed
+        self.ps_pa_x = config.getfloat('pa_x', None); self.ps_pa_y = config.getfloat('pa_y', None)
         # A tap measures the raw kinematic contact height, but bed_mesh later ADDS its own
         # correction at the same XY. Without this, both are applied and the nozzle ends up
         # that much too high over the whole first layer.
@@ -949,7 +956,7 @@ class OznLabSensor:
             logging.exception("oznlab tap: could not read the bed mesh")
             return 0.
 
-    def _soft_tap(self, speed, accel=100.):
+    def _soft_tap(self, speed, accel=100., soft=None):
         """(speed, depth) for the taps after the first, which only need to go a little past a contact
         that is already known. The ramp fit wants 10 samples after the contact, so at a low data
         rate the descent is slowed down instead of made deeper: 14 samples within 0.1 mm. The record
@@ -960,9 +967,10 @@ class OznLabSensor:
         except Exception:
             sps = float(self.sensor.data_rate)
         sps = max(sps, 1.)
-        v = max(0.3, min(speed, 0.1 * sps / 14.))
+        w = self.tap_soft if soft is None else soft
+        v = max(0.15, min(speed, w * sps / 14.))
         lost = 0.01 * v + v * v / (2. * max(accel, 1.))
-        return v, max(0.1, 14. * v / sps + lost + 0.03)
+        return v, max(0.04, 14. * v / sps + lost + 0.02)
 
     def _tap_once(self, toolhead, z_start, z_target, speed, accel, lift_speed=10.,
                   settle=0.3, pre=0.4, post=0.35):
@@ -1024,8 +1032,8 @@ class OznLabSensor:
         return z_c, hz_per_um, amp, f_pre
 
     cmd_TAP_help = ("Nozzle-on-bed tap using the OznLab Sensor: OZNLAB_TAP [SAMPLES=5] [DISCARD=1] "
-                    "[SPEED=2] [START=2] [TARGET=-0.3] [DEPTH=] [ADJUST=] [APPLY=1] [SAVE=1]  "
-                    "(the first tap goes to TARGET, the others DEPTH past the contact it found)")
+                    "[SPEED=2] [START=2] [TARGET=-0.3] [SOFT=0.1] [DEPTH=] [ADJUST=] [APPLY=1] [SAVE=1]  "
+                    "(the first tap goes to TARGET, the others just past the contact; SOFT= how far, in mm)")
     def cmd_TAP(self, gcmd):
         toolhead = self.printer.lookup_object('toolhead')
         if 'z' not in toolhead.get_status(self.reactor.monotonic())['homed_axes']:
@@ -1051,19 +1059,28 @@ class OznLabSensor:
             raise gcmd.error("oznlab tap: TARGET=%.2f is below [stepper_z] position_min=%.2f - "
                              "set position_min to about -1 or raise TARGET" % (z_target, z_min))
         lift_speed = 10.
-        v_soft, depth = self._soft_tap(speed, accel)
-        depth = self._gf(gcmd, 'DEPTH', depth, minval=0.05, maxval=0.6)
+        soft = self._gf(gcmd, 'SOFT', None, minval=0.03, maxval=0.3)
+        v_soft, depth = self._soft_tap(speed, accel, soft)
+        depth = self._gf(gcmd, 'DEPTH', depth, minval=0.03, maxval=0.6)
         results = []; sens = []
+        # a tap run at the same spot earlier: the first descent is soft too, with a wider window
+        # above (Z homing moves the contact a little between runs). A contact outside it falls
+        # back to the full descent.
+        pos = toolhead.get_position(); z_c = None; first_margin = 0.4
+        lc = self._last_contact
+        if lc is not None and abs(lc[0] - pos[0]) < 5. and abs(lc[1] - pos[1]) < 5.:
+            z_c = lc[2]; first_margin = 0.5
         try:
-            z_c = None
             for i in range(samples + discard):
                 if z_c is None:
                     s0, t0, v0 = z_start, z_target, speed     # the first descent finds the contact
                 else:                                         # the others go just past it, slower
-                    s0 = min(z_start, z_c + 0.4)
+                    s0 = min(z_start, z_c + (first_margin if i == 0 else 0.4))
                     t0 = max(z_target, z_c - depth); v0 = v_soft
                 try:
                     z_c, hz_per_um, amp, f_pre = self._tap_once(toolhead, s0, t0, v0, accel, lift_speed)
+                    if t0 != z_target and z_c > s0 - 0.03:
+                        raise self.gcode.error("contact at the very start of the descent")
                 except self.gcode.error as e:
                     if t0 == z_target: raise
                     # the short descent did not give the fit enough: this one goes the full way
@@ -1091,6 +1108,8 @@ class OznLabSensor:
         med = results[len(results) // 2]
         mean = sum(results) / len(results)
         sd = math.sqrt(sum((r - mean) ** 2 for r in results) / len(results))
+        if sd <= 0.025:
+            p = toolhead.get_position(); self._last_contact = (p[0], p[1], med)
         self._detail(gcmd, "oznlab tap: median z=%.4f mean %.4f stddev %.4f range %.4f sensitivity %.1f Hz/um"
                      % (med, mean, sd, results[-1] - results[0], sum(sens) / len(sens)))
         spread = "%d taps within %.3f mm" % (len(results), results[-1] - results[0]) \
@@ -2913,11 +2932,11 @@ class OznLabSensor:
               "    ... prime line ...\n"
               "    OZNLAB_MONITOR             ; last line of PRINT_START\n"
               "  (= filament from the gcode file, PA in the air over the front left corner of the bed,\n"
-              "  15 s settle, tap over the bed centre. Purge bucket? add PA_X=<x> PA_Y=<y>.\n"
+              "  15 s settle, tap over the bed centre. Purge bucket? put pa_x: and pa_y: in [%s].\n"
               "  Slicer without filament_type in the file? add FILAMENT=\"{params.FILAMENT|default('')}\")\n"
               "  In PRINT_END and CANCEL_PRINT:\n"
               "    OZNLAB_PRINT_END\n"
-              "  Done. OZNLAB_CHECK re-runs the health report any time.")
+              "  Done. OZNLAB_CHECK re-runs the health report any time." % self.cfg_name)
 
     def _setup_prepare(self, gcmd):
         """home, heat and park over the bed centre for a setup step. TEMP= X= Y= override."""
@@ -3168,83 +3187,237 @@ class OznLabSensor:
         gcmd.respond_info(self._report_text(self._last_job))
 
     # ================= MENU (Mainsail / Fluidd popup) =================
-    MENU = (
-        # key, button label, command, color, needs
-        ('check', "Health check", "OZNLAB_CHECK", 'primary', None),
-        ('push', "Push test (25 s)", "OZNLAB_WATCH DURATION=25", 'secondary', None),
-        ('setup', "Guided setup", "OZNLAB_SETUP", 'secondary', None),
-        ('tap', "Tap: Z offset", "OZNLAB_TAP SAVE=0", 'primary', 'homed'),
-        ('tapadj', "Keep babystep", "OZNLAB_TAP_ADJUST", 'secondary', None),
-        ('pa', "Measure PA", "OZNLAB_CALIBRATE_PA", 'primary', 'hot'),
-        ('crashtest', "Crash test (60 s)", "OZNLAB_CRASH TEST=1", 'secondary', None),
-        ('maxflow', "Max flow", "OZNLAB_MAX_FLOW", 'info', 'hot'),
-        ('retract', "Retraction", "OZNLAB_RETRACT_TEST", 'info', 'hot'),
-        ('temp', "Temperature", "OZNLAB_TEMP_SCAN", 'info', 'hot'),
-        ('meshsetup', "Mesh area", "OZNLAB_MESH_SETUP", 'secondary', None),
-        ('mesh', "Nozzle mesh", "OZNLAB_MESH", 'secondary', 'homed'),
-        ('hometest', "Home test", "OZNLAB_HOME_TEST", 'secondary', 'homing'),
-        ('report', "Last print", "OZNLAB_REPORT", 'secondary', None),
-        ('help', "All commands", "OZNLAB_HELP", 'secondary', None),
+    # One page per job. Every page says in plain words what each button does before the button.
+    # RUN= keys: the button closes the popup first (the command may open its own popup or run for
+    # minutes), then runs the command.
+    MENU = {
+        'check': "OZNLAB_CHECK",
+        'setup': "OZNLAB_SETUP",
+        'push': "OZNLAB_WATCH DURATION=25",
+        'crashtest': "OZNLAB_CRASH TEST=1",
+        'hometest': "OZNLAB_HOME_TEST",
+        'maxflow': "OZNLAB_MAX_FLOW",
+        'retract': "OZNLAB_RETRACT_TEST",
+        'temp': "OZNLAB_TEMP_SCAN",
+        'thermal': "OZNLAB_THERMAL_CAL",
+        'tap': "OZNLAB_TAP SAVE=0",
+        'tapsave': "OZNLAB_TAP",
+        'tapadj': "OZNLAB_TAP_ADJUST",
+        'pa': "OZNLAB_CALIBRATE_PA",
+        'pameasure': "OZNLAB_CALIBRATE_PA APPLY=0",
+        'meshsetup': "OZNLAB_MESH_SETUP",
+        'mesh': "OZNLAB_MESH",
+        'meshcompare': "OZNLAB_MESH_COMPARE",
+        'homesetup': "OZNLAB_SETUP STEP=6",
+        'report': "OZNLAB_REPORT",
+        'save': "SAVE_CONFIG",
+        'help': None,                          # old key: opens the command pages
+    }
+    # command list pages: (title, [(command, what it does)])
+    MENU_COMMANDS = (
+        ("Setup and health", (
+            ('OZNLAB_MENU', "this window"),
+            ('OZNLAB_SETUP', "guided first-time setup, one step per call"),
+            ('OZNLAB_CHECK', "health report: wiring, sensor, config"),
+            ('OZNLAB_STATUS', "one second reading: frequency, noise, errors"),
+            ('OZNLAB_REPORT', "summary of the last print"),
+            ('OZNLAB_HELP', "every command with all its options, in the console"))),
+        ("In PRINT_START / PRINT_END", (
+            ('OZNLAB_PRINT_START', "filament, pressure advance and tap in one line"),
+            ('OZNLAB_MONITOR', "clog and runout watch, last line of PRINT_START"),
+            ('OZNLAB_CRASH', "crash watch (experimental), after OZNLAB_MONITOR"),
+            ('OZNLAB_PRINT_END', "in PRINT_END and CANCEL_PRINT: stops the watches"),
+            ('OZNLAB_FILAMENT TYPE=PETG', "tells the sensor the filament (PRINT_START does it)"))),
+        ("Z offset", (
+            ('OZNLAB_TAP', "taps the bed, sets the Z offset (SAVE=0: not saved)"),
+            ('OZNLAB_TAP_ADJUST', "keeps the babystep of this print for every next tap"),
+            ('OZNLAB_THERMAL_CAL', "how much the nozzle moves per degree C"))),
+        ("Pressure advance", (
+            ('OZNLAB_CALIBRATE_PA', "measures and sets pressure advance (FILAMENT= TEMP=)"),
+            ('OZNLAB_PA_SCALE PATTERN_PA=0.04', "scale for a filament, from your PA pattern print"))),
+        ("Bed mesh and homing", (
+            ('OZNLAB_MESH_SETUP', "window to choose the mesh area"),
+            ('OZNLAB_MESH', "bed mesh with the nozzle, starts right away"),
+            ('OZNLAB_MESH_COMPARE', "difference between two mesh profiles"),
+            ('OZNLAB_HOME_TEST', "nozzle homing dry run, changes nothing"))),
+        ("Tests", (
+            ('OZNLAB_TEST TYPE=flow', "the filament tests from one command (flow, retract, temp)"),
+            ('OZNLAB_MAX_FLOW', "highest flow before the extruder skips"),
+            ('OZNLAB_RETRACT_TEST', "retraction length that really drops the pressure"),
+            ('OZNLAB_TEMP_SCAN', "melt pressure against temperature"),
+            ('OZNLAB_WATCH', "live TAP / PRESS lines on the console"),
+            ('OZNLAB_STREAM DURATION=10 FILE=x.csv', "raw samples to a file"))),
     )
-    # two levels: the start page shows the groups, each group page its tools
-    MENU_PAGES = (
-        # key, button label, color, rows of MENU keys, note on the page
-        ('setup', "Setup and health", 'primary', (('check', 'push', 'setup'),), None),
-        ('zpa', "Z offset and PA", 'primary', (('tap', 'pa'), ('tapadj', 'crashtest')),
-         "Tap needs a homed printer; PA needs a hot nozzle over the purge area. "
-         "Keep babystep: after babystepping a print, folds it into tap_adjust_z."),
-        ('tests', "Filament tests", 'info', (('maxflow', 'retract', 'temp'),),
-         "These extrude in the air: park over the purge area first."),
-        ('mesh', "Bed mesh and homing", 'secondary', (('meshsetup', 'mesh'), ('hometest',)), None),
-    )
+
+    def _prompt_items(self, title, items, footer):
+        """popup with texts and button rows in the given order: items are ('text', str) or
+        ('row', [(label, gcode, color)])"""
+        R = self.gcode.respond_raw
+        R("// action:prompt_begin %s" % title)
+        for kind, v in items:
+            if kind == 'text':
+                R("// action:prompt_text %s" % v)
+            else:
+                if len(v) > 1: R("// action:prompt_button_group_start")
+                for label, cmd, color in v:
+                    R("// action:prompt_button %s|%s|%s" % (label, cmd, color))
+                if len(v) > 1: R("// action:prompt_button_group_end")
+        for label, cmd, color in footer:
+            R("// action:prompt_footer_button %s|%s|%s" % (label, cmd, color))
+        R("// action:prompt_show")
 
     cmd_MENU_help = "Popup with the OznLab Sensor tools (Mainsail / Fluidd): OZNLAB_MENU [PAGE=] [CLOSE=1]"
     def cmd_MENU(self, gcmd):
         c = "OZNLAB_MENU"
-        items = dict((k, (label, cmd, color, need)) for k, label, cmd, color, need in self.MENU)
-        pages = dict((k, (label, color, rows, note)) for k, label, color, rows, note in self.MENU_PAGES)
         if gcmd.get_int('CLOSE', 0):
             self._prompt_close(); return
         run = gcmd.get('RUN', '').strip().lower()
         if run:
-            if run not in items:
+            if run.startswith('fil_'):                 # PA page: pick the filament, stay on the page
+                self.cmd_FILAMENT(self.gcode.create_gcode_command(
+                    "OZNLAB_FILAMENT", "OZNLAB_FILAMENT", {'TYPE': run[4:], 'JOB': '0'}))
+                self._menu_page(c, 'pa'); return
+            if run not in self.MENU:
                 raise gcmd.error("oznlab menu: unknown item %s" % run)
-            # close first: the command may open its own popup (mesh setup) or run for minutes
+            if self.MENU[run] is None:
+                self._menu_page(c, 'cmds'); return
             self._prompt_close()
-            self.gcode.run_script_from_command(items[run][1])
+            self.gcode.run_script_from_command(self.MENU[run])
             return
         page = gcmd.get('PAGE', '').strip().lower()
-        if page and page not in pages:
-            raise gcmd.error("oznlab menu: unknown page %s" % page)
-        scale, src, known = self._pa_scale_for()
-        texts = ["OznLab Sensor v%s" % VERSION,
-                 "Filament: %s, pa_scale %.3f%s" % (self._fil_disp() if self.filament else "unknown",
-                                                     scale, "" if known else " (default)"),
-                 "Last tap: %s   Last PA: %s" % ("%.3f mm" % self.last_tap_z if self.last_tap_z is not None else "-",
-                                                "%.4f" % self.last_pa if self.last_pa is not None else "-")]
-        close = ("Close", "%s CLOSE=1" % c, 'secondary')
+        self._menu_page(c, page)
+
+    def _menu_page(self, c, page):
+        B = lambda label, key, color='primary': (label, "%s RUN=%s" % (c, key.upper()), color)
+        P = lambda label, key, color='secondary': (label, "%s PAGE=%s" % (c, key.upper()), color)
+        back = ("Back", c, 'secondary'); close = ("Close", "%s CLOSE=1" % c, 'secondary')
+        save = ("SAVE_CONFIG", "%s RUN=SAVE" % c, 'warning')
+        T = lambda s: ('text', s)
+        homed = self._homed()
+        other = self._other_probe()
         if not page:
-            rows = [[(label, "%s PAGE=%s" % (c, k.upper()), color)]
-                    for k, label, color, r, note in self.MENU_PAGES]
-            rows.append([(items['report'][0], "%s RUN=REPORT" % c, 'secondary'),
-                         (items['help'][0], "%s RUN=HELP" % c, 'secondary')])
-            self._prompt("OznLab Sensor", texts, rows, [close])
-            return
-        label, color, prow, note = pages[page]
-        rows = []
-        for row in prow:
-            btns = []
-            for k in row:
-                blabel, cmd, bcolor, need = items[k]
-                if need == 'homing' and self.homing is None:
-                    continue
-                btns.append((blabel, "%s RUN=%s" % (c, k.upper()), bcolor))
-            if btns:
-                rows.append(btns)
-        if note:
-            texts.append(note)
-        self._prompt("OznLab Sensor: %s" % label, texts, rows,
-                     [("Back", c, 'secondary'), close])
+            scale, src, known = self._pa_scale_for()
+            items = [T("OznLab Sensor v%s" % VERSION),
+                     T("Z offset: %s    PA: %s    Filament: %s" % (
+                         "%.3f" % self.last_tap_z if self.last_tap_z is not None else "not measured",
+                         "%.4f" % self.last_pa if self.last_pa is not None else "not measured",
+                         self._fil_disp() if self.filament else "unknown")),
+                     ('row', [P("Z offset (tap)", 'z', 'primary')]),
+                     ('row', [P("Pressure advance", 'pa', 'primary')]),
+                     ('row', [P("Bed mesh", 'mesh', 'primary')]),
+                     ('row', [P("Z homing with the nozzle", 'homing')]),
+                     ('row', [P("Setup, health and tests", 'tests')]),
+                     ('row', [B("Last print report", 'report', 'secondary'), P("All commands", 'cmds')])]
+            self._prompt_items("OznLab Sensor", items, [close]); return
+        if page == 'z':
+            items = [T("Z offset now: %s    tap_adjust_z: %.3f" % (
+                         "%.3f" % self.last_tap_z if self.last_tap_z is not None else "not measured yet",
+                         self.tap_adjust_z)),
+                     T("TAP: the nozzle taps the bed where it is now and sets the Z offset. "
+                       "Home first, nozzle hot and clean, over the bed."),
+                     ('row', [B("Tap (this session)", 'tap'), B("Tap and save", 'tapsave', 'secondary')])]
+            if not homed:
+                items.append(T("The printer is not homed: run G28 first."))
+            items += [T("FIRST LAYER TOO HIGH OR TOO SQUISHED? Print, and while it prints change the Z offset "
+                        "with Mainsail's babystep buttons until the line looks right. Then press:"),
+                      ('row', [B("Keep my babystep", 'tapadj', 'secondary')]),
+                      T("It adds your change to tap_adjust_z, so every next tap puts the nozzle there. "
+                        "Then SAVE_CONFIG.")]
+            self._prompt_items("OznLab: Z offset", items, [back, save, close]); return
+        if page == 'pa':
+            scale, src, known = self._pa_scale_for()
+            saved = ", ".join("%s %.3f" % (k.upper(), v) for k, v in sorted(self.pa_scales.items()))
+            items = [T("Filament now: %s, scale %.3f%s" % (
+                         self._fil_disp() if self.filament else "unknown", scale,
+                         "" if known else " (default, no scale for it yet)")),
+                     T("Saved scales: %s    Default: %.3f" % (saved or "none yet", self.pa_scale)),
+                     T("Method: %s    Last PA: %s" % (self.pa_method,
+                         "%.4f" % self.last_pa if self.last_pa is not None else "not measured"))]
+            if self.pa_scales:
+                items += [T("Pick the loaded filament:"),
+                          ('row', [B(k.upper(), 'fil_' + k, 'secondary') for k in sorted(self.pa_scales)][:4])]
+            items += [T("MEASURE: extrudes about 10 s in the air. Heat to printing temperature and park "
+                        "over the purge area first."),
+                      ('row', [B("Measure and set PA", 'pa'), B("Measure only", 'pameasure', 'secondary')]),
+                      T("NEW FILAMENT: print your slicer's PA pattern with it, read the best line, then type in "
+                        "the console with your numbers:"),
+                      T("OZNLAB_PA_SCALE PATTERN_PA=0.04 TYPE=PETG TEMP=240"),
+                      T("and SAVE_CONFIG. Guide step 4.6.")]
+            self._prompt_items("OznLab: Pressure advance", items, [back, save, close]); return
+        if page == 'mesh':
+            if self.mesh_min is not None and self.mesh_max is not None:
+                area = "X%.0f Y%.0f to X%.0f Y%.0f, %dx%d points" % (
+                    self.mesh_min[0], self.mesh_min[1], self.mesh_max[0], self.mesh_max[1],
+                    self.mesh_count[0], self.mesh_count[1])
+            else:
+                area = "not chosen yet"
+            n = self.mesh_count[0] * self.mesh_count[1]
+            items = [T("Mesh area: %s" % area)]
+            if other:
+                items.append(T("This printer has a probe and it does the normal mesh. The nozzle mesh "
+                               "here is a check against it."))
+            items += [T("1. CHOOSE THE AREA (once): opens a window where you move the nozzle to the "
+                        "corners of the area you print on."),
+                      ('row', [B("Choose mesh area", 'meshsetup', 'secondary')]),
+                      T("2. START BED MESH: the nozzle taps every point of the area right away, about "
+                        "%s for %d points. Home first, nozzle hot and clean, bed at printing "
+                        "temperature." % (("%.0f min" % (n * 3.5 / 60.)) if n * 3.5 >= 90. else
+                                           ("%.0f s" % (n * 3.5)), n)),
+                      ('row', [B("Start bed mesh", 'mesh')])]
+            if other:
+                items += [T("After both meshes: shows where your probe and the nozzle disagree."),
+                          ('row', [B("Compare the two meshes", 'meshcompare', 'secondary')])]
+            self._prompt_items("OznLab: Bed mesh", items, [back, save, close]); return
+        if page == 'homing':
+            if self.homing is None:
+                items = [T("OFF. The nozzle can home Z instead of an endstop, or next to your probe."),
+                         T("To try it: add z_homing: 1 to [%s] in printer.cfg, restart Klipper, and "
+                           "open this page again. It needs a recent Klipper on the toolhead board "
+                           "(guide 6.6)." % self.cfg_name)]
+            else:
+                ep = str(self._cfg_settings('stepper_z').get('endstop_pin') or '').strip()
+                if ep.startswith('oznlab'):
+                    now = "Z homes with the nozzle; your probe stays the probe for the mesh."
+                elif 'z_virtual_endstop' in ep and not other:
+                    now = "Z homes with the nozzle (it is Klipper's probe)."
+                else:
+                    now = "Z homes with %s now. The nozzle can take over." % (ep or "your endstop")
+                items = [T(now),
+                         T("GUIDED SETUP: tests the nozzle trigger first, then prints the exact lines to "
+                           "change for your printer. Run it up to three times; each run says what is next."),
+                         ('row', [B("Guided homing setup", 'homesetup')]),
+                         T("A dry run that changes nothing: Setup, health and tests page.")]
+            self._prompt_items("OznLab: Z homing", items, [back, close]); return
+        if page == 'tests':
+            items = [T("SETUP"),
+                     ('row', [B("Guided setup", 'setup'), B("Health check", 'check', 'secondary')]),
+                     T("SENSOR TESTS"),
+                     ('row', [B("Push test (25 s)", 'push', 'secondary'),
+                              B("Crash test (60 s)", 'crashtest', 'secondary')]
+                      + ([B("Home test", 'hometest', 'secondary')] if self.homing is not None else [])),
+                     T("Push test: push the nozzle up with a finger, every push prints a TAP line. "
+                       "Crash test: knock the toolhead, see if it is noticed."
+                       + (" Home test: nozzle homing dry run, Z must be homed." if self.homing is not None else "")),
+                     T("FILAMENT TESTS: they extrude in the air, park over the purge area first."),
+                     ('row', [B("Max flow", 'maxflow', 'info'), B("Retraction", 'retract', 'info'),
+                              B("Temperature", 'temp', 'info')]),
+                     T("Max flow: the volumetric limit for the slicer. Retraction: the length that "
+                       "really drops the pressure. Temperature: melt pressure against temperature."),
+                     T("THERMAL: taps from 180 to 250 C, about 10 min. Unload the filament first."),
+                     ('row', [B("Thermal calibration", 'thermal', 'secondary')])]
+            self._prompt_items("OznLab: Setup, health and tests", items, [back, close]); return
+        if page == 'cmds':
+            items = [T("Commands are typed in the console. Pick a group to see what each one does. "
+                       "OZNLAB_HELP in the console lists every option.")]
+            for k, (title, cmds) in enumerate(self.MENU_COMMANDS):
+                items.append(('row', [P(title, 'cmds%d' % (k + 1))]))
+            self._prompt_items("OznLab: All commands", items, [back, close]); return
+        if page.startswith('cmds') and page[4:].isdigit() and 1 <= int(page[4:]) <= len(self.MENU_COMMANDS):
+            title, cmds = self.MENU_COMMANDS[int(page[4:]) - 1]
+            items = [T("%s - %s" % (cmd, what)) for cmd, what in cmds]
+            self._prompt_items("OznLab: %s" % title, items,
+                               [("Back", "%s PAGE=CMDS" % c, 'secondary'), close]); return
+        raise self.gcode.error("oznlab menu: unknown page %s" % page)
 
     cmd_PRINT_START_help = ("Everything OznLab needs at print start, in one line: OZNLAB_PRINT_START "
                             "[FILAMENT=] [PA_X= PA_Y=] [TAP_X= TAP_Y=] [SETTLE=15] [PA=1] [TAP=1] [MONITOR=0] [CRASH=0] "
@@ -3274,7 +3447,8 @@ class OznLabSensor:
             if th.get_position()[2] < lift:
                 run("G1 Z%.1f F600" % lift)
             # no purge coordinates: the front left corner of the bed, in the air
-            px = self._gf(gcmd, 'PA_X', min(x0 + 15., x1)); py = self._gf(gcmd, 'PA_Y', min(y0 + 15., y1))
+            px = self._gf(gcmd, 'PA_X', self.ps_pa_x if self.ps_pa_x is not None else min(x0 + 15., x1))
+            py = self._gf(gcmd, 'PA_Y', self.ps_pa_y if self.ps_pa_y is not None else min(y0 + 15., y1))
             run("G1 X%.1f Y%.1f F9000" % (px, py))
             sub('OZNLAB_CALIBRATE_PA', self.cmd_CALIBRATE_PA, {})
             run("SAVE_GCODE_STATE NAME=oznlab_ps\nM83\nG1 E-4 F1800\nRESTORE_GCODE_STATE NAME=oznlab_ps")

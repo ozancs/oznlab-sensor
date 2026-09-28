@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.9.13
+
+- A purge bucket for the PA test is set in the config: `pa_x`, `pa_y` in `[oznlab_sensor hotend]`. The PRINT_START line stays `OZNLAB_PRINT_START` with nothing after it
+- Taps push less. A tap run at the spot of the previous one starts soft too (only the very first tap after a start goes the full depth). `SOFT=` on `OZNLAB_TAP` (mm, default 0.1) tries how far past the bed the soft taps go; smaller is gentler, the descent slows down to keep the samples the fit needs. A soft tap that finds no contact in its window is repeated at full depth
+- `OZNLAB_MENU` rebuilt: one page each for Z offset, pressure advance, bed mesh, Z homing, and setup, health and tests. Every page says in plain words what each button does before the button. The PA page shows the saved filament scales and lets you pick the loaded filament. "Start bed mesh" says it starts right away; "Choose mesh area" says what it opens. All the tests (push, crash, home test, filament tests, thermal) are on one page. "All commands" opens command pages by group instead of printing everything on the console
+- Guide 5.1 rewritten: two lines into the macro, everything optional goes into the config, one example macro. Troubleshooting: `Unknown command: "PA_X=260"` and the Cura filament case
+
 ## v0.9.12
 
 - The soft taps of v0.9.11 failed with "only 9 samples after the contact" on a printer with 100 samples/s: at a low data rate the ramp fit cannot get its samples within 0.1 mm at 2 mm/s. The taps after the first now descend slower instead of deeper (0.7 mm/s at 100 samples/s, 1.4 at 200, 2 at 400), so they stay about 0.15 mm past the contact at any data rate; the record's lost end and the deceleration are counted in. A short tap that still fails is repeated at full depth instead of failing the command
