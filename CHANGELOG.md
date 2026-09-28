@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.9.15
+
+- Heaters go off by themselves after a tap or a test outside a print: 2 minutes after the last OznLab step, when no print is running and nothing else is moving the printer. Another OznLab step in the meantime, or a print starting, keeps them on. Before, a quick tap test could leave the nozzle hot for hours
+- Z homing setup (step 6): the lines to change in printer.cfg now come in a popup, in plain words, one step at a time, instead of on the console (console lines start with `//`, and pasted from there they became comments)
+- Menu, bed mesh page: 3x3 / 5x5 / 7x7 / 9x9 buttons change the number of points and keep the area, no need to pick the corners again
+
 ## v0.9.14
 
 - `OZNLAB_CHECK` and setup step 2 only say the drive current "was measured at start" when it was; otherwise they say how to set it

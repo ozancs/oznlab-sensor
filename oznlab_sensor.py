@@ -99,7 +99,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.9.14"
+VERSION = "0.9.15"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -454,6 +454,8 @@ class OznLabSensor:
                                 ('OZNLAB_PRINT_END', self.cmd_PRINT_END, self.cmd_PRINT_END_help),
                                 ('OZNLAB_TEST', self.cmd_TEST, self.cmd_TEST_help)):
             self._help[cmd] = desc
+            if cmd in self.COOL_AFTER:
+                func = self._cool_wrap(func)
             self.gcode.register_mux_command(cmd, 'SENSOR', self.name, func, desc=desc)
             try:
                 self.gcode.register_mux_command(cmd, 'SENSOR', None, func, desc=desc)
@@ -461,6 +463,74 @@ class OznLabSensor:
                 pass
         self.printer.register_event_handler('klippy:connect', self._on_connect)
         self.printer.register_event_handler('klippy:ready', self._on_ready)
+
+    # ================= heaters off after a test =================
+    # A tap or a test outside a print must not leave the nozzle hot for hours. After these commands,
+    # when no print is running, the heaters go off COOL_DELAY s later; any of them run again in the
+    # meantime, or a print starting, keeps them on.
+    COOL_AFTER = ('OZNLAB_TAP', 'OZNLAB_CALIBRATE_PA', 'OZNLAB_PA_SCALE', 'OZNLAB_MAX_FLOW',
+                  'OZNLAB_RETRACT_TEST', 'OZNLAB_TEMP_SCAN', 'OZNLAB_THERMAL_CAL', 'OZNLAB_SETUP',
+                  'OZNLAB_MESH', 'OZNLAB_HOME_TEST', 'OZNLAB_TEST')
+    COOL_DELAY = 120.
+
+    def _cool_wrap(self, func):
+        def wrapped(gcmd):
+            self._cool_cancel()
+            try:
+                return func(gcmd)
+            finally:
+                try:
+                    self._cool_arm()
+                except Exception:
+                    logging.exception("oznlab: could not schedule the heaters off")
+        return wrapped
+
+    def _in_print(self):
+        if self._job is not None:                 # OZNLAB_PRINT_START / FILAMENT of a print
+            return True
+        try:
+            st = self.printer.lookup_object('print_stats').get_status(self.reactor.monotonic())['state']
+        except Exception:
+            st = None
+        return st in ('printing', 'paused')
+
+    def _heaters_on(self):
+        try:
+            ph = self.printer.lookup_object('heaters')
+            now = self.reactor.monotonic()
+            return any((h.get_status(now).get('target') or 0.) > 0. for h in ph.heaters.values())
+        except Exception:
+            return False
+
+    def _cool_cancel(self):
+        t = getattr(self, '_cool_timer', None)
+        if t is not None:
+            self.reactor.update_timer(t, self.reactor.NEVER)
+
+    def _cool_arm(self):
+        if self._in_print() or not self._heaters_on():
+            return
+        if getattr(self, '_cool_timer', None) is None:
+            self._cool_timer = self.reactor.register_timer(self._cool_fire)
+        self.reactor.update_timer(self._cool_timer, self.reactor.monotonic() + self.COOL_DELAY)
+        self.gcode.respond_info("OznLab: not printing, so the heaters go off in %.0f min "
+                                "(another OznLab step or a print keeps them on)" % (self.COOL_DELAY / 60.))
+
+    def _cool_fire(self, eventtime):
+        try:
+            if self._in_print() or not self._heaters_on():
+                return self.reactor.NEVER
+            try:
+                busy = self.printer.lookup_object('idle_timeout').get_status(eventtime)['state'] == 'Printing'
+            except Exception:
+                busy = False
+            if busy:                               # something else is moving the printer: look again later
+                return eventtime + 30.
+            self.gcode.run_script("TURN_OFF_HEATERS")
+            self.gcode.respond_info("OznLab: heaters off (no print started after the last OznLab step)")
+        except Exception:
+            logging.exception("oznlab: heaters off failed")
+        return self.reactor.NEVER
 
     def _check_z_endstop(self, config):
         """[stepper_z] endstop_pin must point at something that exists, said in our words instead of
@@ -3002,41 +3072,53 @@ class OznLabSensor:
             pos = th.get_position()
             other = self._other_probe()
             zs = self._cfg_raw('stepper_z')
+            # the lines go into a popup: console lines start with "// ", and pasted from there they
+            # would be comments. Plain words, one thing per line.
+            T = lambda t: ('text', t)
+            items = [T("The test worked: the nozzle stopped %.2f mm after it touched the bed." % over),
+                     T("Now edit printer.cfg (in Mainsail: Machine, then printer.cfg):")]
             if other:
-                # the printer keeps its probe (mesh, z_tilt): the nozzle is a second endstop
-                lines = ["  The trigger works (%.2f mm past the bed). This printer has a probe already, so" % over,
-                         "  the nozzle homes Z as a plain endstop next to it. In [stepper_z] set:",
-                         "       endstop_pin: oznlab:z_virtual_endstop",
-                         "       position_endstop: 0",
-                         "       homing_speed: 3",
-                         "       homing_retract_dist: 0",
-                         "       position_min: -1",
-                         "  (keep z_homing_probe: 0, your probe stays the probe for the mesh)"]
+                items += [T("1. Find the [stepper_z] section. Put these lines in it. If a line with the same "
+                            "name is already there, replace it:"),
+                          T("endstop_pin: oznlab:z_virtual_endstop"),
+                          T("position_endstop: 0"),
+                          T("homing_speed: 3"),
+                          T("homing_retract_dist: 0"),
+                          T("position_min: -1")]
                 drop = [o for o in ('homing_positive_dir',) if o in zs]
             else:
-                lines = ["  The trigger works (%.2f mm past the bed). To home Z with the nozzle:" % over,
-                         "  1. In [%s] add:" % self.cfg_name,
-                         "       z_homing_probe: 1",
-                         "  2. In [stepper_z] set:",
-                         "       endstop_pin: probe:z_virtual_endstop",
-                         "       homing_speed: 3",
-                         "       homing_retract_dist: 0",
-                         "       position_min: -1"]
+                items += [T("1. Find the [%s] section and add this line:" % self.cfg_name),
+                          T("z_homing_probe: 1"),
+                          T("2. Find the [stepper_z] section. Put these lines in it. If a line with the same "
+                            "name is already there, replace it:"),
+                          T("endstop_pin: probe:z_virtual_endstop"),
+                          T("homing_speed: 3"),
+                          T("homing_retract_dist: 0"),
+                          T("position_min: -1")]
                 drop = [o for o in ('position_endstop', 'homing_positive_dir') if o in zs]
             if drop:
-                lines += ["     and delete these lines from [stepper_z] (Klipper refuses to start with them):"]
-                lines += ["       %s: %s" % (o, zs[o]) for o in drop]
+                items += [T("In the same [stepper_z] section delete this line%s:" % ("s" if len(drop) > 1 else ""))]
+                items += [T("%s: %s" % (o, zs[o])) for o in drop]
+            n = 2 if other else 3
             if self.printer.lookup_object('homing_override', None) is not None:
-                lines += ["  Your [homing_override] must home Z with the nozzle over the bed",
-                          "  (for example at X%.0f Y%.0f, where you are now)." % (pos[0], pos[1])]
+                items += [T("%d. You have a [homing_override]. Look at it: before its G28 Z line the nozzle "
+                            "has to be over the bed. If it is not, add this line before G28 Z:" % n),
+                          T("G1 X%.0f Y%.0f F6000" % (pos[0], pos[1]))]
             elif self.printer.lookup_object('safe_z_home', None) is None:
-                lines += ["  Add a [safe_z_home] so Z homes over the bed:",
-                          "       [safe_z_home]",
-                          "       home_xy_position: %.0f, %.0f" % (pos[0], pos[1]),
-                          "       z_hop: 5"]
-            lines += ["  Restart Klipper, G28, heat the nozzle and run OZNLAB_SETUP STEP=6 again:",
-                      "  it then measures and stores the Z offset."]
-            R("\n".join(lines)); return
+                items += [T("%d. Add this new section, so Z always homes over the bed:" % n),
+                          T("[safe_z_home]"),
+                          T("home_xy_position: %.0f, %.0f" % (pos[0], pos[1])),
+                          T("z_hop: 5")]
+            if other:
+                items += [T("Your probe keeps doing the bed mesh, do not change its section.")]
+            items += [T("Then: save the file, restart Klipper and home (G28). Z now homes with the nozzle."),
+                      T("Last step: open this again (OZNLAB_MENU, Z homing, Guided homing setup). It "
+                        "measures the Z offset once and stores it.")]
+            R("OznLab home test OK (%.2f mm past the bed). The lines to change are in the popup window." % over)
+            self._prompt_items("OznLab: Z homing, the lines to change", items,
+                               [("Restart Klipper", "RESTART", 'warning'),
+                                ("Close", "OZNLAB_MENU CLOSE=1", 'secondary')])
+            return
         # c) the nozzle is the Z endstop: homing already put Z 0 on the contact. Measure the
         # contact here and store the offset (contact + tap_adjust_z) for prints without a tap.
         R("%s\n  The nozzle homes Z. Measuring the contact after homing and storing the Z offset." % head)
@@ -3295,6 +3377,13 @@ class OznLabSensor:
                 self.cmd_MESH_COMPARE(self.gcode.create_gcode_command(
                     "OZNLAB_MESH_COMPARE", "OZNLAB_MESH_COMPARE", {'A': a, 'B': b}))
                 return
+            if run.startswith('grid_') and run[5:].isdigit():   # mesh page: grid size, same area
+                n = int(run[5:])
+                if not 3 <= n <= 15:
+                    raise gcmd.error("oznlab menu: grid %d is out of range" % n)
+                self.mesh_count = (n, n)
+                self.printer.lookup_object('configfile').set(self.cfg_name, 'mesh_count', "%d, %d" % (n, n))
+                self._menu_page(c, 'mesh'); return
             if run.startswith('fil_'):                 # PA page: pick the filament, stay on the page
                 self.cmd_FILAMENT(self.gcode.create_gcode_command(
                     "OZNLAB_FILAMENT", "OZNLAB_FILAMENT", {'TYPE': run[4:], 'JOB': '0'}))
@@ -3380,7 +3469,14 @@ class OznLabSensor:
                                "here is a check against it."))
             items += [T("1. CHOOSE THE AREA (once): opens a window where you move the nozzle to the "
                         "corners of the area you print on."),
-                      ('row', [B("Choose mesh area", 'meshsetup', 'secondary')]),
+                      ('row', [B("Choose mesh area", 'meshsetup', 'secondary')])]
+            if self.mesh_min is not None and self.mesh_max is not None:
+                cur = self.mesh_count[0]
+                items += [T("POINTS: same area, more points = more detail, takes longer. Changing it "
+                            "keeps the area (SAVE_CONFIG keeps the choice)."),
+                          ('row', [B("%dx%d" % (k, k), 'grid_%d' % k, 'primary' if k == cur else 'secondary')
+                                   for k in (3, 5, 7, 9)])]
+            items += [
                       T("2. START BED MESH: the nozzle taps every point of the area right away, about "
                         "%s for %d points. Home first, nozzle hot and clean, bed at printing "
                         "temperature." % (("%.0f min" % (n * 3.5 / 60.)) if n * 3.5 >= 90. else
