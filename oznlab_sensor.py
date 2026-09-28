@@ -63,7 +63,7 @@
 #   OZNLAB_RETRACT_TEST [SPEED=5] [MIN=.2] [MAX=1.4] [STEP=.2] [RSPEED=35]   retraction length for the slicer
 #   OZNLAB_TEMP_SCAN [MIN=] [MAX=] [STEP=5] [SPEED=3] [SETTLE=20]          pressure vs nozzle temperature
 #   OZNLAB_CRASH | OFF=1 | STATUS=1 | TEST=1 [UM=80] [HZ=] [GCODE=]   EXPERIMENTAL toolhead-collision watch
-#   OZNLAB_THERMAL_CAL [MIN=180] [MAX=250] [STEP=20] [SETTLE=90] [SAMPLES=3] [SPEED=] [START=] [TARGET=] [SAVE=1]
+#   OZNLAB_THERMAL_CAL [MIN=180] [MAX=250] [STEP=20] [SETTLE=40] [SAMPLES=3] [SPEED=] [START=] [TARGET=] [SAVE=1]
 #        nozzle drift per degree C: the tap repeated at several hotend temperatures (unload filament first)
 #   OZNLAB_CHECK                             health report (chip, f0, noise, errors, config sanity)
 #   OZNLAB_HELP                              every command with its usage
@@ -72,12 +72,14 @@
 #        bed mesh with the nozzle as the probe; Klipper's [bed_mesh] applies it
 #        every tap is written to oznlab_mesh_taps.csv in the config folder
 #   OZNLAB_MESH_COMPARE [A=default] [B=oznlab]   shape difference of two mesh profiles
+#   OZNLAB_TAP_ADJUST                        fold this print's babystep into tap_adjust_z (then SAVE_CONFIG)
 #   OZNLAB_HOME_TEST                         tap homing dry run (needs z_homing: 1): trigger vs contact
 #   OZNLAB_SETUP [STEP=1..8] [RESET=1]       guided first-time setup, one step per call
 #   OZNLAB_MENU [PAGE=]                      Mainsail / Fluidd popup with every tool, in four pages
 #   OZNLAB_REPORT                            summary of the current or last print
 #   OZNLAB_FILAMENT TYPE=                    which filament this print uses (per-filament pa_scale)
 #   OZNLAB_PRINT_START [FILAMENT=] [PA_X= PA_Y=] [TAP_X= TAP_Y=] [SETTLE=15] [PA=1] [TAP=1] [MONITOR=0] [CRASH=0]
+#        filament: FILAMENT=, else the gcode file's filament_type (Orca / Prusa / Bambu write it)
 #   OZNLAB_PRINT_END                         stops the clog / runout and crash watch
 #   OZNLAB_TEST TYPE=flow|retract|temp       the three filament tests from one command
 #
@@ -96,7 +98,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.9.9"
+VERSION = "0.9.10"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -247,6 +249,22 @@ class Detector:
         if t - self.t_ev > self.PRESS_MAX: self._end(t, x)
 
 
+# config sections that make (or usually come with) Klipper's [probe]
+PROBE_SECTIONS = ('probe', 'bltouch', 'smart_effector', 'load_cell_probe', 'dockable_probe',
+                  'beacon', 'cartographer', 'scanner', 'btt_eddy', 'bdsensor', 'idm', 'probe_eddy_ng')
+
+
+def probe_sections(config):
+    """names of the config sections that register a probe: [probe], [bltouch], [probe_eddy_current x],
+    [probe_eddy_ng x] ... whatever their position in the file"""
+    out = []
+    for sec in config.get_prefix_sections(''):
+        n = sec.get_name(); head = n.split()[0]
+        if head in PROBE_SECTIONS or head.startswith('probe_') or 'eddy' in head:
+            out.append(n)
+    return out
+
+
 class OznLabSensor:
     def __init__(self, config):
         self.printer = config.get_printer()
@@ -332,6 +350,7 @@ class OznLabSensor:
         self.homing = None
         if self.z_homing:
             self.homing = OznLabHoming(self, config)
+        self._check_z_endstop(config)
         self.saved_tap_z = config.getfloat('tap_z', None)      # written by OZNLAB_TAP + SAVE_CONFIG
         # pressure advance calibration (never saved - applied live per print)
         self.pa_speed = config.getfloat('pa_speed', 3.0, above=0.5, maxval=20.)     # mm/s filament
@@ -404,6 +423,7 @@ class OznLabSensor:
                                 ('OZNLAB_STREAM', self.cmd_STREAM, self.cmd_STREAM_help),
                                 ('OZNLAB_WATCH', self.cmd_WATCH, self.cmd_WATCH_help),
                                 ('OZNLAB_TAP', self.cmd_TAP, self.cmd_TAP_help),
+                                ('OZNLAB_TAP_ADJUST', self.cmd_TAP_ADJUST, self.cmd_TAP_ADJUST_help),
                                 ('OZNLAB_CALIBRATE_PA', self.cmd_CALIBRATE_PA, self.cmd_CALIBRATE_PA_help),
                                 ('OZNLAB_PA_SCALE', self.cmd_PA_SCALE, self.cmd_PA_SCALE_help),
                                 ('OZNLAB_FILAMENT', self.cmd_FILAMENT, self.cmd_FILAMENT_help),
@@ -434,6 +454,30 @@ class OznLabSensor:
         self.printer.register_event_handler('klippy:connect', self._on_connect)
         self.printer.register_event_handler('klippy:ready', self._on_ready)
 
+    def _check_z_endstop(self, config):
+        """[stepper_z] endstop_pin must point at something that exists, said in our words instead of
+        Klipper's 'Unknown pin chip name'."""
+        try:
+            ep = config.getsection('stepper_z').get('endstop_pin', '', note_valid=False).strip()
+        except Exception:
+            return
+        chip = ep.split(':')[0].lstrip('^~!') if ':' in ep else ''
+        if 'z_virtual_endstop' not in ep:
+            return
+        # another [oznlab_sensor x] may be the probe
+        sibling = any(sec.getboolean('z_homing_probe', False, note_valid=False)
+                      for sec in config.get_prefix_sections('oznlab_sensor ') if sec.get_name() != self.cfg_name)
+        if chip == 'probe' and not self.z_homing_probe and not sibling and not probe_sections(config):
+            raise config.error(
+                "[stepper_z] endstop_pin: probe:z_virtual_endstop, but nothing in the config is a probe. "
+                "To home Z with the nozzle set z_homing: 1 and z_homing_probe: 1 in [%s]. "
+                "To keep the old endstop, put its pin back into endstop_pin." % self.cfg_name)
+        sib_chip = any(sec.getboolean('z_homing', False, note_valid=False)
+                       for sec in config.get_prefix_sections('oznlab_sensor ') if sec.get_name() != self.cfg_name)
+        if chip == 'oznlab' and self.homing is None and not sib_chip:
+            raise config.error(
+                "[stepper_z] endstop_pin: oznlab:z_virtual_endstop needs z_homing: 1 in [%s]" % self.cfg_name)
+
     def _on_connect(self):
         try:
             mid = self.sensor.read_reg(0x7E); did = self.sensor.read_reg(0x7F)
@@ -445,12 +489,44 @@ class OznLabSensor:
 
     def _on_ready(self):
         if self.update_check: self._upd_start()
+        if self._cfg_raw(self.cfg_name).get('reg_drive_current') is None:
+            def later(et):
+                with self.gcode.get_mutex():         # not in the middle of a startup macro's moves
+                    self._auto_drive_current()
+            self.reactor.register_callback(later)
         if self.saved_tap_z is None: return
         try:
             self.gcode.run_script("SET_GCODE_OFFSET Z=%.4f MOVE=0" % self.saved_tap_z)
+            self.last_tap_z = self.saved_tap_z
             self.gcode.respond_info("OznLab: saved z offset %.3f applied" % self.saved_tap_z)
         except Exception:
             logging.exception("oznlab: could not apply the saved tap z offset")
+
+    def _auto_drive_current(self):
+        """LDC_CALIBRATE_DRIVE_CURRENT, done by the module at the first start: the chip picks its own
+        drive current (0.2 s, no motion). Applied now, written by the next SAVE_CONFIG."""
+        try:
+            live = {'on': True}
+            self.sensor.add_client(lambda msg: live['on'])
+            th = self.printer.lookup_object('toolhead')
+            th.dwell(0.100); th.wait_moves()
+            old = self.sensor.read_reg(ldc1612.REG_CONFIG)
+            self.sensor.set_reg(ldc1612.REG_CONFIG, 0x001 | (1 << 9))
+            th.wait_moves(); th.dwell(0.100); th.wait_moves()
+            reg = self.sensor.read_reg(ldc1612.REG_DRIVE_CURRENT0)
+            self.sensor.set_reg(ldc1612.REG_CONFIG, old)
+            live['on'] = False
+            dc = (reg >> 6) & 0x1f
+            if not 0 < dc < 31:
+                logging.info("oznlab %s: drive current calibration gave %d, left as is", self.name, dc)
+                return
+            self.sensor.dccal.drive_cur = dc
+            self.sensor.set_reg(ldc1612.REG_DRIVE_CURRENT0, dc << 11)
+            self.printer.lookup_object('configfile').set(self.cfg_name, 'reg_drive_current', "%d" % dc)
+            self.gcode.respond_info("OznLab %s: drive current %d measured and applied - the next SAVE_CONFIG "
+                                    "keeps it" % (self.name, dc))
+        except Exception:
+            logging.exception("oznlab %s: drive current calibration failed", self.name)
 
     # ================= update check =================
     def _upd_start(self):
@@ -458,7 +534,14 @@ class OznLabSensor:
         _UPD['printer'] = self.printer
         if _UPD['latest'] is not None:        # known from before a RESTART: report it again
             self._upd_done(_UPD['latest']); return
-        if _UPD['started']: return            # a check is still running
+        if _UPD['started']:                   # still running from before a RESTART: poll its result
+            def poll(et):
+                if _UPD['latest'] is not None:
+                    self._upd_done(_UPD['latest']); return self.reactor.NEVER
+                return et + 10. if et - t0 < 300. else self.reactor.NEVER
+            t0 = self.reactor.monotonic()
+            self.reactor.register_timer(poll, t0 + 10.)
+            return
         _UPD['started'] = True
         repo = os.path.dirname(os.path.realpath(__file__))
         if not os.path.exists(os.path.join(repo, '.git')): return     # not a git install
@@ -478,7 +561,10 @@ class OznLabSensor:
                     logging.info("oznlab: update check failed (%s)", e)
                 time.sleep(60.)
             _UPD['latest'] = latest; _UPD['started'] = False    # kept even if Klipper restarts meanwhile
-            reactor.register_async_callback(lambda et: self._upd_done(latest))
+            try:
+                reactor.register_async_callback(lambda et: self._upd_done(latest))
+            except Exception:
+                pass                                  # Klipper restarted meanwhile: the poll above reports it
         t = threading.Thread(target=work, name='oznlab-update')
         t.daemon = True
         t.start()
@@ -995,10 +1081,40 @@ class OznLabSensor:
             if save:
                 configfile = self.printer.lookup_object('configfile')
                 configfile.set(self.cfg_name, 'tap_z', "%.4f" % z_off)
+                self.saved_tap_z = z_off
             gcmd.respond_info("OznLab tap: z offset %.3f set (%s)%s"
                               % (z_off, spread, " - SAVE_CONFIG to keep it" if save else ""))
             self.last_tap_z = z_off
             self._job_note('tap', "%.3f mm (%s)" % (z_off, spread))
+
+    cmd_TAP_ADJUST_help = ("Fold the babystep of this print into tap_adjust_z, so every next tap lands "
+                           "there: OZNLAB_TAP_ADJUST, then SAVE_CONFIG")
+    def cmd_TAP_ADJUST(self, gcmd):
+        if self.last_tap_z is None:
+            raise gcmd.error("oznlab: no tap since the start - babystep after an OZNLAB_TAP, then run this")
+        gm = self.printer.lookup_object('gcode_move')
+        z_now = gm.get_status(self.reactor.monotonic())['homing_origin'].z
+        delta = z_now - self.last_tap_z
+        if abs(delta) < 0.0005:
+            gcmd.respond_info("OznLab: the z offset is still what the tap set (%.3f), nothing to fold in"
+                              % self.last_tap_z); return
+        new = self.tap_adjust_z + delta
+        if not -1. <= new <= 1.:
+            raise gcmd.error("oznlab: tap_adjust_z would become %.3f - that is not a babystep" % new)
+        configfile = self.printer.lookup_object('configfile')
+        where = self._option_in_include('tap_adjust_z')
+        if where:
+            raise gcmd.error("oznlab: tap_adjust_z is set in %s, and SAVE_CONFIG refuses to override an "
+                             "included value. Set tap_adjust_z: %.3f there yourself (or move the "
+                             "[%s] section into printer.cfg)" % (where, new, self.cfg_name))
+        self.tap_adjust_z = new
+        configfile.set(self.cfg_name, 'tap_adjust_z', "%.3f" % new)
+        if self.saved_tap_z is not None:               # the offset applied at start, for prints without a tap
+            self.saved_tap_z = z_now
+            configfile.set(self.cfg_name, 'tap_z', "%.4f" % z_now)
+        self.last_tap_z = z_now
+        gcmd.respond_info("OznLab: babystep %+.3f folded in, tap_adjust_z %.3f - SAVE_CONFIG to keep it"
+                          % (delta, new))
 
     # ================= PRESSURE ADVANCE (extrude step -> pressure rise time constant) =================
     # Linear melt model: tau * dP/dt = v_in - v_out, v_out ~ P.  Klipper's PA feeds E + PA*v, which
@@ -1182,11 +1298,13 @@ class OznLabSensor:
         return cb
 
     cmd_CALIBRATE_PA_help = ("Measure melt pressure rise time and set pressure advance (not saved): "
-                             "OZNLAB_CALIBRATE_PA [SPEEDS=3] [DURATION=1.5] [SAMPLES=1] [DISCARD=1] "
-                             "[PRIME=12] [RETRIES=2] [SCALE=] [APPLY=1] [METHOD=auto|decay|fast|rise] [FILE=]  (SCALE defaults to this filament's pa_scale)")
+                             "OZNLAB_CALIBRATE_PA [FILAMENT=PLA] [TEMP=215] [SPEEDS=3] [DURATION=1.5] [SAMPLES=1] "
+                             "[DISCARD=1] [PRIME=12] [RETRIES=2] [SCALE=] [APPLY=1] [METHOD=auto|decay|fast|rise] "
+                             "[FILE=]  (FILAMENT = OZNLAB_FILAMENT first, TEMP = heat and wait first)")
     def cmd_CALIBRATE_PA(self, gcmd):
         toolhead = self.printer.lookup_object('toolhead')
         self._free(gcmd, "pa")
+        self._filament_and_temp(gcmd)
         try:
             speeds = [float(s) for s in gcmd.get('SPEEDS', "%.2f" % self.pa_speed).split(',')]
         except ValueError:
@@ -1223,6 +1341,11 @@ class OznLabSensor:
         accel = getattr(extruder, 'max_e_accel', 1500.) or 1500.
         speeds = [min(v, v_max) for v in speeds if v > 0.]
         if not speeds: raise gcmd.error("oznlab pa: no valid speeds")
+        e_max = getattr(extruder, 'max_e_dist', None) or 50.
+        if max(speeds) * secs > e_max:
+            raise gcmd.error("oznlab pa: %.1f mm/s x %.1f s = %.0f mm is over max_extrude_only_distance %.0f "
+                             "- lower DURATION or raise max_extrude_only_distance in [extruder]"
+                             % (max(speeds), secs, max(speeds) * secs, e_max))
         results = []; fh = None
         if fname:      # opened first: a bad path must not leave PA at 0 and M83 active
             try:
@@ -1239,8 +1362,11 @@ class OznLabSensor:
             # zone gives a creeping rise and a tau 2-3x too high, so every attempt refills it first
             # and a failed attempt refills harder before trying again.
             p_now = prime * (1.5 ** attempt)
-            if p_now > 0.:
-                self.gcode.run_script_from_command("G1 E%.3f F300" % p_now)
+            while p_now > 0.:                     # in pieces: max_extrude_only_distance is often 50
+                piece = min(p_now, e_max * 0.9)
+                self.gcode.run_script_from_command("G1 E%.3f F300" % piece)
+                p_now -= piece
+            if prime > 0.:
                 toolhead.wait_moves(); toolhead.dwell(1.0); toolhead.wait_moves()
             for v in speeds:
                 for i in range(samples + discard):
@@ -1407,6 +1533,38 @@ class OznLabSensor:
             gcmd.respond_info("OznLab PA: measured %.4f (tau %.3f s, %s) - not applied" % (pa_new, tau, method))
 
     # ---- filament of the current print and its pa_scale ----
+    def _file_filament(self):
+        """filament_type from the gcode file being printed (Orca, Prusa, Super, Bambu write
+        '; filament_type = PLA' in the settings block at the end; multi-material: 'PLA;PETG')"""
+        try:
+            vsd = self.printer.lookup_object('virtual_sdcard', None)
+            path = vsd.file_path() if vsd is not None else None
+            if not path:
+                return None
+            with open(path, 'rb') as f:
+                f.seek(0, 2); size = f.tell()
+                f.seek(max(0, size - 65536)); tail = f.read().decode('utf-8', 'replace')
+                f.seek(0); head = f.read(16384).decode('utf-8', 'replace')
+            for txt in (tail, head):
+                m = re.search(r'^;\s*filament_type\s*=\s*([A-Za-z0-9+\-]+)', txt, re.M)
+                if m:
+                    return m.group(1)
+        except Exception:
+            logging.exception("oznlab: could not read the filament type from the gcode file")
+        return None
+
+    def _filament_and_temp(self, gcmd):
+        """FILAMENT= names the filament, TEMP= heats the nozzle and waits. Both optional."""
+        fil = gcmd.get('FILAMENT', None)
+        if fil is not None and gcmd.get_command() != 'OZNLAB_FILAMENT':
+            self.cmd_FILAMENT(self.gcode.create_gcode_command(
+                "OZNLAB_FILAMENT", "OZNLAB_FILAMENT", {'TYPE': fil, 'JOB': '0'}))
+        temp = self._gf(gcmd, 'TEMP', None)
+        if temp is not None:
+            if not 120. <= temp <= 350.:
+                raise gcmd.error("oznlab: TEMP must be between 120 and 350 C")
+            self.gcode.run_script_from_command("M109 S%.0f" % temp)
+
     @staticmethod
     def _fil_key(name):
         name = (name or '').strip().lower().replace('+', ' plus ')
@@ -1433,47 +1591,71 @@ class OznLabSensor:
         return ("OznLab PA: filament unknown - using the default pa_scale %.3f. Pass the filament from the "
                 "slicer (PRINT_START FILAMENT=...) so each filament uses its own scale." % self.pa_scale)
 
-    cmd_FILAMENT_help = "Tell the sensor which filament this print uses (PRINT_START calls it): OZNLAB_FILAMENT TYPE=ASA"
+    cmd_FILAMENT_help = ("Tell the sensor which filament this print uses (PRINT_START calls it): "
+                         "OZNLAB_FILAMENT [TYPE=ASA]  (no TYPE: the gcode file's filament_type)")
     def cmd_FILAMENT(self, gcmd):
         raw = gcmd.get('TYPE', '').strip().strip('"').strip("'")
+        job = gcmd.get_int('JOB', 1)                   # 0 from the calibration commands: no print report
+        origin = ""
+        if not raw:
+            raw = self._file_filament() or ""
+            if raw: origin = " (from the gcode file)"
         self.filament = self._fil_key(raw) or None
         self.filament_name = raw.upper() if self.filament else None
         if self._job is not None and self._job.get('auto'):
             self._job['filament'] = self._fil_disp(); self._job['auto'] = False   # same print, now named
-        else:
+        elif job:
             self._job_start()  # PRINT_START calls this first: a new print begins
         scale, src, known = self._pa_scale_for()
         if self.filament is None:
-            msg = "OznLab filament: unknown (no TYPE)"
+            msg = "OznLab filament: unknown (no TYPE, none in the gcode file)"
             if self.pa_scales:
                 msg += " - " + self._scale_warning().replace("OznLab PA: ", "")
         elif known:
-            msg = "OznLab filament: %s - pa_scale %.3f" % (self._fil_disp(), scale)
+            msg = "OznLab filament: %s%s - pa_scale %.3f" % (self._fil_disp(), origin, scale)
         else:
-            msg = "OznLab filament: %s - %s" % (self._fil_disp(),
-                                                   self._scale_warning().replace("OznLab PA: ", ""))
+            msg = "OznLab filament: %s%s - %s" % (self._fil_disp(), origin,
+                                                     self._scale_warning().replace("OznLab PA: ", ""))
         if self._job is not None and not known:
             self._job['warned'] = self.filament
         gcmd.respond_info(msg)
 
     cmd_PA_SCALE_help = ("One-time setup per filament: OZNLAB_PA_SCALE PATTERN_PA=<best PA from a pattern test> "
-                         "[TYPE=ASA] -> stores pa_scale_<filament>")
+                         "[TYPE=ASA] [TEMP=250] [MEASURE=1] -> measures tau now (same filament and temperature "
+                         "as the pattern test) and stores pa_scale_<filament>")
     def cmd_PA_SCALE(self, gcmd):
-        if self.pa_cal is None:
-            raise gcmd.error("oznlab: run OZNLAB_CALIBRATE_PA first (same filament/temperature as the pattern test)")
         pattern = self._gf(gcmd, 'PATTERN_PA', above=0.)
-        key = self._fil_key(gcmd.get('TYPE', '')) or self.filament
+        if gcmd.get('TYPE', None) is not None:
+            self.cmd_FILAMENT(self.gcode.create_gcode_command(
+                "OZNLAB_FILAMENT", "OZNLAB_FILAMENT", {'TYPE': gcmd.get('TYPE'), 'JOB': '0'}))
+        if gcmd.get_int('MEASURE', 1) or self.pa_cal is None:
+            # tau moves with the state of the melt zone, so the scale is always taken from a
+            # measurement made right now, not from an earlier one
+            self._free(gcmd, "pa scale")
+            self._filament_and_temp(gcmd)
+            self._lift_clear(gcmd)
+            self.cmd_CALIBRATE_PA(self.gcode.create_gcode_command(
+                "OZNLAB_CALIBRATE_PA", "OZNLAB_CALIBRATE_PA", {'APPLY': 0, 'SENSOR': self.name}))
+            if self.pa_cal is None:
+                raise gcmd.error("oznlab: no reliable tau just now - nothing stored. Check the message above, "
+                                 "prime the nozzle and run OZNLAB_PA_SCALE again")
+        key = self.filament
         scale = round(pattern / self.pa_cal['tau'], 4)      # checked as it will be saved
         if not 0.005 < scale <= 3.0:                # must stay inside the range the config accepts at boot
             raise gcmd.error("oznlab: computed pa_scale %.4f is out of range (tau %.4f s) - "
                              "re-run OZNLAB_CALIBRATE_PA and check PATTERN_PA" % (scale, self.pa_cal['tau']))
         configfile = self.printer.lookup_object('configfile')
+        opt = 'pa_scale_%s' % key if key else 'pa_scale'
+        for o in (opt, 'pa_method'):
+            inc = self._option_in_include(o)
+            if inc:
+                raise gcmd.error("oznlab: %s is set in %s, and SAVE_CONFIG refuses to override an included "
+                                 "value. Delete it there first, or move the [%s] section into printer.cfg"
+                                 % (o, inc, self.cfg_name))
         if key:
-            opt = 'pa_scale_%s' % key
             self.pa_scales[key] = scale
             where = "for %s" % key.upper()
         else:
-            opt = 'pa_scale'
             self.pa_scale = scale; self._pa_scale_set = True
             where = "default (filament unknown; add TYPE=ASA etc. to store it per filament)"
         configfile.set(self.cfg_name, opt, "%.4f" % scale)
@@ -1493,6 +1675,18 @@ class OznLabSensor:
     #   > clog_ratio   in confirm_windows consecutive windows -> CLOG    -> clog_gcode
     #   < runout_ratio in confirm_windows consecutive windows -> RUNOUT  -> runout_gcode
     # Nothing is judged on the first layer (monitor_min_z): nozzle/bed contact forces look like pressure.
+    @staticmethod
+    def _e_speed(hist, t, e, span=0.05):
+        """filament speed from the (t, e) history over about span seconds; None until it is long
+        enough. hist is trimmed in place."""
+        hist.append((t, e))
+        while len(hist) > 2 and t - hist[1][0] >= span:
+            del hist[0]
+        t0, e0 = hist[0]
+        if t - t0 < 0.6 * span:
+            return None
+        return (e - e0) / (t - t0)
+
     def _mon_reload(self):
         m = self._mon; c = self.pa_cal
         m.update(p_ref=c['p_ref'], v_ref=c['v_ref'], n=c['n'], sign=c['sign'],
@@ -1537,7 +1731,7 @@ class OznLabSensor:
         if self._tap is not None:
             # TAP / CALIBRATE_PA / the slicer tests are running: nozzle contact or a deliberate
             # pressure step, neither is print pressure. Drop the window and resync afterwards.
-            m['win'] = dict(t0=-1e9, t=0., hi=0., lo=0.); m['t_last'] = None
+            m['win'] = dict(t0=-1e9, t=0., hi=0., lo=0.); m['t_last'] = None; m['hist'] = []
             return True
         for t, f, z in msg.get('data', ()):
             if f <= 0.: continue
@@ -1545,14 +1739,14 @@ class OznLabSensor:
                 e = extruder.find_past_position(t)
             except Exception:
                 e = None
-            if m['t_last'] is None or e is None or m['e_last'] is None:
-                m['t_last'] = t; m['e_last'] = e
+            v = self._e_speed(m['hist'], t, e) if e is not None else None
+            if m['t_last'] is None or v is None:
+                m['t_last'] = t
                 if m['base'] is None: m['base'] = f
                 continue
             dt = t - m['t_last']
             if dt <= 0.: continue
-            v = (e - m['e_last']) / dt
-            m['t_last'] = t; m['e_last'] = e
+            m['t_last'] = t
             v_prev = m['v']                        # compare against the EMA BEFORE it moves
             m['v'] += (v - m['v']) * min(1., dt / 0.1)
             vp = max(m['v'], 0.)
@@ -1581,11 +1775,15 @@ class OznLabSensor:
                 if g >= 0.35 and m['f_flow'] is not None and m['f_end']:
                     rem = math.exp(-g / max(m['tau_d'], 0.05))
                     f_end = sorted(m['f_end'])[len(m['f_end']) // 2]
-                    if rem < 0.7:
+                    if rem < 0.7 and not self._mon_pending(m):
                         b_obs = (f_end - rem * m['f_flow']) / (1. - rem)
                         wgt = min(1., 1. - rem)             # longer gap -> more decayed -> more trust
                         if m['t_obs'] is not None:
                             gap = t - m['t_obs']
+                            # the coil drifts ~10 Hz/s at most; a jump of a good part of the working
+                            # pressure is not a baseline change but a slower decay (a clog): cap it
+                            lim = abs(m['drift']) * gap + 0.25 * abs(m['p_ref']) + 20. * gap
+                            b_obs = max(m['b_obs'] - lim, min(m['b_obs'] + lim, b_obs))
                             if 1.0 < gap < 120.:
                                 rate = (b_obs - m['b_obs']) / gap
                                 m['drift'] += (rate - m['drift']) * min(1., gap / 60.)
@@ -1763,7 +1961,7 @@ class OznLabSensor:
                 raise gcmd.error("oznlab monitor: cannot write %s (%s)" % (log, e))
         self._mon = dict(fh=fh, nlog=0, ok_t=0., warned=False, t_seed=None, t_dev=None,
                          flowing=False, t_stop=None, f_end=[], f_flow=None, t_obs=None, b_obs=None, drift=0.,
-                         t_last=None, e_last=None, base=None, v=0., p=0., p_exp=0., ratio=None,
+                         t_last=None, hist=[], base=None, v=0., p=0., p_exp=0., ratio=None,
                          t_move=-1e9, win=dict(t0=-1e9, t=0., hi=0., lo=0.), n_hi=0, n_lo=0, fired=None, t=0., k=1., t_act=0., z=0.,
                          t_start=None, n_clog=0, n_runout=0, n_warn=0, seen_print=False)
         self._mon_reload()
@@ -2135,16 +2333,15 @@ class OznLabSensor:
                 e = extruder.find_past_position(t)
             except Exception:
                 e = None
-            if e is not None and c['e_last'] is not None and c['t_last'] is not None:
+            v = self._e_speed(c['hist'], t, e) if e is not None else None
+            if v is not None and c['t_last'] is not None:
                 dt = t - c['t_last']
                 if dt > 0.:
-                    v = (e - c['e_last']) / dt
                     v_prev = c['v']
                     c['v'] += (v - c['v']) * min(1., dt / 0.12)
                     if abs(v - v_prev) > max(0.3, 0.25 * abs(c['v'])):
                         c['t_vchg'] = t            # flow is changing: the melt transient is running
             dtn = (t - c['t_last']) if c['t_last'] is not None else 0.01
-            if e is not None: c['e_last'] = e
             c['t_last'] = t
             w = c['w']
             if len(buf) < 2 * w: continue
@@ -2283,6 +2480,8 @@ class OznLabSensor:
                          % (c['thr'], ("%.0f um at %.1f Hz/um" % (c['um'], self.last_sens))
                             if (c['um'] and self.last_sens) else "fixed", c['noise'], c['z']))
             return
+        if self._crash is not None and self._crash['test'] and self.reactor.monotonic() > self._crash['until']:
+            self._crash_stop("test finished (no samples came in)")   # the sample callback never ran
         if self._crash is not None:
             if self._crash['test']:
                 if not gcmd.get_int('TEST', 1):         # TEST=0 while a test runs: stop it
@@ -2304,7 +2503,7 @@ class OznLabSensor:
         else:
             step = max(floor, um * 3.)          # no tap yet: assume 3 Hz/um until one runs
         w = max(2, int(round(0.015 * self.sensor.data_rate)))      # half-window ~15 ms
-        self._crash = dict(buf=[], w=w, e_last=None, t_last=None, v=0., t_vchg=-1e9, dead=0.,
+        self._crash = dict(buf=[], w=w, hist=[], t_last=None, v=0., t_vchg=-1e9, dead=0.,
                            run=0, sign=0., peak=0., noise=0., thr=step, step=step, um=um, floor=floor,
                            armed=False, z=0., n=0, seen_print=False, gcode=script,
                            test=bool(test), until=self.reactor.monotonic() + duration, ev=False,
@@ -2341,7 +2540,7 @@ class OznLabSensor:
     # than at 180 C. This measures that slope once; after that a tap taken at one temperature can be
     # corrected for a print running at another.
     cmd_THERMAL_CAL_help = ("Nozzle drift per degree C, by tapping at several temperatures: "
-                            "OZNLAB_THERMAL_CAL [MIN=180] [MAX=250] [STEP=20] [SETTLE=90] [SAMPLES=3] [SPEED=] [START=] [TARGET=] [SAVE=1]")
+                            "OZNLAB_THERMAL_CAL [MIN=180] [MAX=250] [STEP=20] [SETTLE=40] [SAMPLES=3] [SPEED=] [START=] [TARGET=] [SAVE=1]")
     def cmd_THERMAL_CAL(self, gcmd):
         toolhead = self.printer.lookup_object('toolhead')
         if 'z' not in toolhead.get_status(self.reactor.monotonic())['homed_axes']:
@@ -2352,7 +2551,7 @@ class OznLabSensor:
         t0 = self._gf(gcmd, 'MIN', 180., minval=60., maxval=350.)
         t1 = self._gf(gcmd, 'MAX', 250., minval=60., maxval=350.)
         dT = self._gf(gcmd, 'STEP', 20., above=5., maxval=60.)
-        settle = self._gf(gcmd, 'SETTLE', 90., minval=20., maxval=600.)
+        settle = self._gf(gcmd, 'SETTLE', 40., minval=15., maxval=600.)
         samples = gcmd.get_int('SAMPLES', 3, minval=2, maxval=10)
         speed = self._gf(gcmd, 'SPEED', self.tap_speed, above=0.2, maxval=10.)
         z_start = self._gf(gcmd, 'START', self.tap_start_z, above=0.5, maxval=10.)
@@ -2436,6 +2635,31 @@ class OznLabSensor:
         except Exception:
             return {}
 
+    def _main_cfg_text(self):
+        try:
+            path = self.printer.get_start_args().get('config_file')
+            return open(path, errors='replace').read() if path else ""
+        except Exception:
+            return ""
+
+    def _section_in_main(self):
+        """is [oznlab_sensor <name>] written in printer.cfg itself (not in an [include])"""
+        return re.search(r'^\s*\[%s\]' % re.escape(self.cfg_name), self._main_cfg_text(), re.M) is not None
+
+    def _option_in_include(self, option):
+        """'an included file' when option is set for this section somewhere else than printer.cfg
+        (Klipper's SAVE_CONFIG then refuses to write a new value for it), else None"""
+        if option not in self._cfg_raw(self.cfg_name):
+            return None
+        text = self._main_cfg_text()
+        m = re.search(r'^\s*\[%s\](.*?)(?=^\s*\[|\Z)' % re.escape(self.cfg_name), text, re.M | re.S)
+        body = m.group(1) if m else ""
+        if re.search(r'^\s*%s\s*[:=]' % re.escape(option), body, re.M):
+            return None
+        if re.search(r'^#\*#\s*%s\s*=' % re.escape(option), text, re.M):
+            return None                       # in the autosave block: ours to overwrite
+        return "an included file"
+
     def _cfg_raw(self, name):
         """options actually written in printer.cfg (autosave block included), no defaults"""
         try:
@@ -2481,7 +2705,11 @@ class OznLabSensor:
             L.append("  [WARN] sample rate %.0f/s is below the configured %d - I2C is the bottleneck, try i2c_speed: 400000" % (st['rate'], exp))
         # 3 - config sanity
         if self._cfg_raw(self.cfg_name).get('reg_drive_current') is None and not st['errors']:   # the [FAIL] above already says it
-            L.append("  [WARN] reg_drive_current not set yet - run LDC_CALIBRATE_DRIVE_CURRENT CHIP=%s + SAVE_CONFIG" % self.name)
+            L.append("  [WARN] reg_drive_current not saved yet - it was measured at start, SAVE_CONFIG keeps it")
+        if not self._section_in_main():
+            L.append("  [WARN] [%s] is in an included file. Values this module saves (tap_z, pa_scale, "
+                     "pa_method, mesh area) can then clash with it at SAVE_CONFIG - move the section into "
+                     "printer.cfg (python3 configure.py in the repo folder does that)" % self.cfg_name)
         zmin = None
         try:
             zmin = self.printer.lookup_object('toolhead').get_kinematics().rails[2].get_range()[0]
@@ -2558,11 +2786,16 @@ class OznLabSensor:
         self._setup_keep(step)
         if resume:
             R("Continuing the setup at step %d (OZNLAB_SETUP RESET=1 starts over, STEP=n jumps)" % step)
+        try:
+            self._setup_step_run(gcmd, step, R)
+        except Exception:
+            self._setup_keep(step - 1)              # the failed step runs again next time
+            raise
+
+    def _setup_step_run(self, gcmd, step, R):
         th = self.printer.lookup_object('toolhead')
         ext = self.printer.lookup_object('toolhead').get_extruder()
         hot = ext.get_status(self.reactor.monotonic()).get('can_extrude', False)
-        try: tmin = float(ext.get_heater().min_extrude_temp)
-        except Exception: tmin = 170.
         nxt = "\n  -> when done, run OZNLAB_SETUP for the next step"
         if step == 1:
             ok, lines = self._check(gcmd)
@@ -2579,11 +2812,14 @@ class OznLabSensor:
             st = self.last_stats or {}
             if st.get('errors'):
                 self._setup_keep(1)
-                R("STEP 2/8  DRIVE CURRENT\n  The sensor reported errors. Run:\n"
-                  "    LDC_CALIBRATE_DRIVE_CURRENT CHIP=%s\n    SAVE_CONFIG\n"
-                  "  (the printer restarts) then run OZNLAB_SETUP STEP=2" % self.name)
+                R("STEP 2/8  DRIVE CURRENT\n  The sensor reported errors - measuring the drive current again.")
+                self._auto_drive_current()
+                R("  Run SAVE_CONFIG (the printer restarts), then OZNLAB_SETUP STEP=2 again.\n"
+                  "  Errors still there afterwards: a coil or wiring problem, see the guide.")
             else:
-                R("STEP 2/8  DRIVE CURRENT\n  [ OK ] no conversion errors, drive current is fine.%s" % nxt)
+                saved = self._cfg_raw(self.cfg_name).get('reg_drive_current') is not None
+                R("STEP 2/8  DRIVE CURRENT\n  [ OK ] no conversion errors, drive current %s.%s"
+                  % ("is fine" if saved else "was measured at start (SAVE_CONFIG keeps it)", nxt))
         elif step == 3:
             secs = 25.
             R("STEP 3/8  DOES THE COIL FEEL THE HOTEND?\n"
@@ -2593,37 +2829,33 @@ class OznLabSensor:
             self.cmd_WATCH(self.gcode.create_gcode_command(
                 "OZNLAB_WATCH", "OZNLAB_WATCH", {'DURATION': secs, 'SENSOR': self.name}))
         elif step == 4:
-            if 'z' not in th.get_status(self.reactor.monotonic())['homed_axes']:
-                self._setup_keep(3)
-                R("STEP 4/8  TAP TEST\n  Home first (G28), move over the middle of the bed, then run OZNLAB_SETUP STEP=4"); return
-            if not hot:
-                self._setup_keep(3)
-                R("STEP 4/8  TAP TEST\n  Heat the nozzle first: at least %.0f C, your printing temperature is best\n"
-                  "  (the hotend grows ~60 um from cold to hot, so tap at the temperature you print at),\n"
-                  "  then run OZNLAB_SETUP STEP=4" % tmin); return
-            R("STEP 4/8  TAP TEST AND Z OFFSET")
+            R("STEP 4/8  TAP TEST AND Z OFFSET\n"
+              "  Homing if needed, heating the nozzle, moving over the middle of the bed, then 5 taps.\n"
+              "  (OZNLAB_SETUP STEP=4 TEMP=<C> X= Y= to change where and how hot; the tip should be clean)")
+            self._setup_prepare(gcmd)
             self.cmd_TAP(self.gcode.create_gcode_command(
                 "OZNLAB_TAP", "OZNLAB_TAP", {'SENSOR': self.name}))
             R("  If the z offset was set, run SAVE_CONFIG to keep it.\n"
               "  If the taps disagreed, clean the nozzle and run OZNLAB_SETUP STEP=4 again.\n"
-              "  First layer too squished later? raise tap_adjust_z.%s" % nxt)
+              "  First layer too squished later? babystep during the print, then OZNLAB_TAP_ADJUST.%s" % nxt)
         elif step == 5:
-            if not hot:
+            if not hot and gcmd.get('TEMP', None) is None:
                 self._setup_keep(4)
-                R("STEP 5/8  PRESSURE ADVANCE\n  Load filament and heat the nozzle to its printing temperature\n"
-                  "  (at least %.0f C, e.g. PLA 210 C, PETG 240 C, ASA 250 C),\n"
-                  "  move the nozzle over the purge bucket or a waste area (the Z lift is automatic),\n"
-                  "  then run OZNLAB_SETUP STEP=5" % tmin); return
+                R("STEP 5/8  PRESSURE ADVANCE\n  Load a filament, then run this step with its name and printing "
+                  "temperature, e.g.\n    OZNLAB_SETUP STEP=5 FILAMENT=PLA TEMP=215\n"
+                  "  It heats, lifts the nozzle and extrudes a little in the air where it is now\n"
+                  "  (move over the purge bucket first if you have one)."); return
             R("STEP 5/8  PRESSURE ADVANCE (measures the melt pressure, applies nothing)")
+            self._filament_and_temp(gcmd)
             self._lift_clear(gcmd)
             self.cmd_CALIBRATE_PA(self.gcode.create_gcode_command(
                 "OZNLAB_CALIBRATE_PA", "OZNLAB_CALIBRATE_PA", {'APPLY': 0, 'SENSOR': self.name}))
             tau = (self.pa_cal or {}).get('tau')
-            R("  Now print your slicer's PA pattern test (same filament and temperature),\n"
-              "  read the PA of the cleanest line, and run:\n"
-              "    OZNLAB_PA_SCALE PATTERN_PA=<that value> TYPE=<filament, e.g. PLA>\n    SAVE_CONFIG\n"
-              "  (one scale per filament type; repeat for each filament you print)\n"
-              "  %s%s" % (("measured tau = %.3f s, so pa_scale = PATTERN_PA / %.3f" % (tau, tau)) if tau else
+            R("  Now print your slicer's PA pattern test with this filament, read the PA of the\n"
+              "  cleanest line, and with the same filament still loaded run:\n"
+              "    OZNLAB_PA_SCALE PATTERN_PA=<that value> TEMP=<same temperature>\n    SAVE_CONFIG\n"
+              "  (it measures again right then; one scale per filament type)\n"
+              "  %s%s" % (("measured tau = %.3f s now" % tau) if tau else
                           "no reliable tau yet - check the message above", nxt))
         elif step == 6:
             self._setup_homing(gcmd, hot, nxt)
@@ -2647,13 +2879,34 @@ class OznLabSensor:
         else:
             R("STEP 8/8  WIRE IT INTO PRINT_START\n"
               "  In PRINT_START, after the nozzle is at printing temperature:\n"
-              "    OZNLAB_PRINT_START FILAMENT=\"{params.FILAMENT|default('')}\" PA_X=<purge x> PA_Y=<purge y>\n"
+              "    OZNLAB_PRINT_START\n"
               "    ... prime line ...\n"
               "    OZNLAB_MONITOR             ; last line of PRINT_START\n"
-              "  (OZNLAB_PRINT_START = FILAMENT, PA over the purge area, 15 s settle, tap over the bed centre)\n"
+              "  (= filament from the gcode file, PA in the air over the front left corner of the bed,\n"
+              "  15 s settle, tap over the bed centre. Purge bucket? add PA_X=<x> PA_Y=<y>.\n"
+              "  Slicer without filament_type in the file? add FILAMENT=\"{params.FILAMENT|default('')}\")\n"
               "  In PRINT_END and CANCEL_PRINT:\n"
               "    OZNLAB_PRINT_END\n"
               "  Done. OZNLAB_CHECK re-runs the health report any time.")
+
+    def _setup_prepare(self, gcmd):
+        """home, heat and park over the bed centre for a setup step. TEMP= X= Y= override."""
+        th = self.printer.lookup_object('toolhead')
+        ext = th.get_extruder(); heater = ext.get_heater()
+        target = heater.get_status(self.reactor.monotonic())['target'] or 0.
+        temp = self._gf(gcmd, 'TEMP', None, minval=120., maxval=350.)
+        if temp is None:
+            temp = target if target >= 140. else 150.
+        self.gcode.run_script_from_command("M109 S%.0f" % temp)
+        if not self._homed():                    # after heating: a nozzle that homes Z must be soft
+            self.gcode.run_script_from_command("G28")
+        try:
+            kin = th.get_kinematics()
+            (x0, x1), (y0, y1) = [kin.rails[i].get_range() for i in range(2)]
+        except Exception:
+            x0 = y0 = 0.; x1 = y1 = 200.
+        x = self._gf(gcmd, 'X', (x0 + x1) / 2.); y = self._gf(gcmd, 'Y', (y0 + y1) / 2.)
+        self.gcode.run_script_from_command("G90\nG1 Z5 F600\nG1 X%.1f Y%.1f F6000" % (x, y))
 
     def _setup_keep(self, step):
         # the last step done; kept by the next SAVE_CONFIG, so the restart it does resumes here
@@ -2677,17 +2930,12 @@ class OznLabSensor:
               "    z_homing: 1\n"
               "  (needs trigger_analog in the toolhead board's Klipper firmware; if Klipper then\n"
               "  refuses to start, remove the line again)%s" % (head, self.cfg_name, nxt)); return
-        if not self._homed():
-            self._setup_keep(5)
-            R("%s\n  Home first (G28), move the nozzle over the middle of the bed, then run "
-              "OZNLAB_SETUP STEP=6" % head); return
-        if (self._noz_temp() or 0.) < 140.:      # the tap needs soft plastic and a settled hotend
-            self._setup_keep(5)
-            R("%s\n  Heat the nozzle first (at least 140 C, 150 C is fine, tip clean), then run "
-              "OZNLAB_SETUP STEP=6" % head); return
-        ep = (self._cfg_settings('stepper_z').get('endstop_pin') or '')
-        nozzle_homes = (self.z_homing_probe and self.printer.lookup_object('probe', None) is self.homing
-                        and 'z_virtual_endstop' in str(ep))
+        R("%s\n  Homing if needed, heating the nozzle, moving over the middle of the bed." % head)
+        self._setup_prepare(gcmd)                # the tap needs soft plastic and a settled hotend
+        ep = str(self._cfg_settings('stepper_z').get('endstop_pin') or '').strip()
+        nozzle_homes = ('z_virtual_endstop' in ep and
+                        ((self.z_homing_probe and self.printer.lookup_object('probe', None) is self.homing)
+                         or ep.startswith('oznlab:')))
         if not nozzle_homes:
             # b) dry run against the current Z homing
             R("%s\n  Test run: the nozzle comes down on the trigger, then fine taps. Nothing is changed." % head)
@@ -2699,31 +2947,39 @@ class OznLabSensor:
                   "  coil is fixed, heat the nozzle to printing temperature and run STEP=6 again." % over); return
             pos = th.get_position()
             other = self._other_probe()
-            lines = ["  The trigger works (%.2f mm past the bed). To home Z with the nozzle:" % over,
-                     "  1. In [%s] add:" % self.cfg_name,
-                     "       z_homing_probe: 1",
-                     "  2. In [stepper_z] set:",
-                     "       endstop_pin: probe:z_virtual_endstop",
-                     "       homing_speed: 3",
-                     "       homing_retract_dist: 0",
-                     "       position_min: -1"]
             zs = self._cfg_raw('stepper_z')
-            drop = [o for o in ('position_endstop', 'homing_positive_dir') if o in zs]
+            if other:
+                # the printer keeps its probe (mesh, z_tilt): the nozzle is a second endstop
+                lines = ["  The trigger works (%.2f mm past the bed). This printer has a probe already, so" % over,
+                         "  the nozzle homes Z as a plain endstop next to it. In [stepper_z] set:",
+                         "       endstop_pin: oznlab:z_virtual_endstop",
+                         "       position_endstop: 0",
+                         "       homing_speed: 3",
+                         "       homing_retract_dist: 0",
+                         "       position_min: -1",
+                         "  (keep z_homing_probe: 0, your probe stays the probe for the mesh)"]
+                drop = [o for o in ('homing_positive_dir',) if o in zs]
+            else:
+                lines = ["  The trigger works (%.2f mm past the bed). To home Z with the nozzle:" % over,
+                         "  1. In [%s] add:" % self.cfg_name,
+                         "       z_homing_probe: 1",
+                         "  2. In [stepper_z] set:",
+                         "       endstop_pin: probe:z_virtual_endstop",
+                         "       homing_speed: 3",
+                         "       homing_retract_dist: 0",
+                         "       position_min: -1"]
+                drop = [o for o in ('position_endstop', 'homing_positive_dir') if o in zs]
             if drop:
                 lines += ["     and delete these lines from [stepper_z] (Klipper refuses to start with them):"]
                 lines += ["       %s: %s" % (o, zs[o]) for o in drop]
             if self.printer.lookup_object('homing_override', None) is not None:
-                lines += ["  3. Your [homing_override] must home Z with the nozzle over the bed",
-                          "     (for example at X%.0f Y%.0f, where you are now)." % (pos[0], pos[1])]
-            else:
-                lines += ["  3. If you have no [safe_z_home], add one so Z homes over the bed:",
+                lines += ["  Your [homing_override] must home Z with the nozzle over the bed",
+                          "  (for example at X%.0f Y%.0f, where you are now)." % (pos[0], pos[1])]
+            elif self.printer.lookup_object('safe_z_home', None) is None:
+                lines += ["  Add a [safe_z_home] so Z homes over the bed:",
                           "       [safe_z_home]",
                           "       home_xy_position: %.0f, %.0f" % (pos[0], pos[1]),
                           "       z_hop: 5"]
-            if other:
-                lines += ["  4. Klipper allows one probe: disable your current probe's section, and delete its",
-                          "     #*# lines at the bottom of printer.cfg too (keep a backup of the file).",
-                          "     Your mesh and z_tilt then use the nozzle (OZNLAB_MESH)."]
             lines += ["  Restart Klipper, G28, heat the nozzle and run OZNLAB_SETUP STEP=6 again:",
                       "  it then measures and stores the Z offset."]
             R("\n".join(lines)); return
@@ -2888,6 +3144,7 @@ class OznLabSensor:
         ('push', "Push test (25 s)", "OZNLAB_WATCH DURATION=25", 'secondary', None),
         ('setup', "Guided setup", "OZNLAB_SETUP", 'secondary', None),
         ('tap', "Tap: Z offset", "OZNLAB_TAP SAVE=0", 'primary', 'homed'),
+        ('tapadj', "Keep babystep", "OZNLAB_TAP_ADJUST", 'secondary', None),
         ('pa', "Measure PA", "OZNLAB_CALIBRATE_PA", 'primary', 'hot'),
         ('crashtest', "Crash test (60 s)", "OZNLAB_CRASH TEST=1", 'secondary', None),
         ('maxflow', "Max flow", "OZNLAB_MAX_FLOW", 'info', 'hot'),
@@ -2903,8 +3160,9 @@ class OznLabSensor:
     MENU_PAGES = (
         # key, button label, color, rows of MENU keys, note on the page
         ('setup', "Setup and health", 'primary', (('check', 'push', 'setup'),), None),
-        ('zpa', "Z offset and PA", 'primary', (('tap', 'pa'), ('crashtest',)),
-         "Tap needs a homed printer; PA needs a hot nozzle over the purge area."),
+        ('zpa', "Z offset and PA", 'primary', (('tap', 'pa'), ('tapadj', 'crashtest')),
+         "Tap needs a homed printer; PA needs a hot nozzle over the purge area. "
+         "Keep babystep: after babystepping a print, folds it into tap_adjust_z."),
         ('tests', "Filament tests", 'info', (('maxflow', 'retract', 'temp'),),
          "These extrude in the air: park over the purge area first."),
         ('mesh', "Bed mesh and homing", 'secondary', (('meshsetup', 'mesh'), ('hometest',)), None),
@@ -2959,15 +3217,15 @@ class OznLabSensor:
                      [("Back", c, 'secondary'), close])
 
     cmd_PRINT_START_help = ("Everything OznLab needs at print start, in one line: OZNLAB_PRINT_START "
-                            "[FILAMENT=] [PA_X= PA_Y=] [TAP_X= TAP_Y=] [SETTLE=15] [PA=1] [TAP=1] [MONITOR=0] [CRASH=0]")
+                            "[FILAMENT=] [PA_X= PA_Y=] [TAP_X= TAP_Y=] [SETTLE=15] [PA=1] [TAP=1] [MONITOR=0] [CRASH=0] "
+                            "(FILAMENT and PA_X/PA_Y are optional: filament from the gcode file, PA over the bed's front left corner)")
     def cmd_PRINT_START(self, gcmd):
         """FILAMENT, pressure advance over the purge area, settle, tap over the bed. The clog watch
         is started here only with MONITOR=1: it normally goes after the prime line."""
         run = self.gcode.run_script_from_command
         def sub(name, fn, params):
             fn(self.gcode.create_gcode_command(name, name, params))
-        if gcmd.get('FILAMENT', None) is not None:
-            sub('OZNLAB_FILAMENT', self.cmd_FILAMENT, {'TYPE': gcmd.get('FILAMENT')})
+        sub('OZNLAB_FILAMENT', self.cmd_FILAMENT, {'TYPE': gcmd.get('FILAMENT', '')})
         if not self._homed():
             raise gcmd.error("oznlab print start: home first (G28)")
         do_pa = gcmd.get_int('PA', 1); do_tap = gcmd.get_int('TAP', 1)
@@ -2985,10 +3243,9 @@ class OznLabSensor:
             lift = min(20., z1 - 5.)
             if th.get_position()[2] < lift:
                 run("G1 Z%.1f F600" % lift)
-            px = self._gf(gcmd, 'PA_X', None); py = self._gf(gcmd, 'PA_Y', None)
-            if px is not None or py is not None:
-                run("G1 %s%s F9000" % ("X%.1f " % px if px is not None else "",
-                                        "Y%.1f" % py if py is not None else ""))
+            # no purge coordinates: the front left corner of the bed, in the air
+            px = self._gf(gcmd, 'PA_X', min(x0 + 15., x1)); py = self._gf(gcmd, 'PA_Y', min(y0 + 15., y1))
+            run("G1 X%.1f Y%.1f F9000" % (px, py))
             sub('OZNLAB_CALIBRATE_PA', self.cmd_CALIBRATE_PA, {})
             run("SAVE_GCODE_STATE NAME=oznlab_ps\nM83\nG1 E-4 F1800\nRESTORE_GCODE_STATE NAME=oznlab_ps")
             if settle > 0.:
@@ -3015,6 +3272,14 @@ class OznLabSensor:
             self._mon_stop("print end")
         if self._crash is not None:
             self._crash_stop("print end")
+        if self._job is not None:
+            try:
+                state = self.printer.lookup_object('print_stats').get_status(self.reactor.monotonic())['state']
+            except Exception:
+                state = None
+            if state not in ('printing', 'paused'):   # streamed G-code: print_stats stays standby
+                self._job['end_state'] = state if state in ('cancelled', 'error') else 'complete'
+                self._job_finish()
 
     TESTS = {'flow': 'MAX_FLOW', 'retract': 'RETRACT_TEST', 'temp': 'TEMP_SCAN'}
     cmd_TEST_help = ("Filament tests in the air, one entry point: OZNLAB_TEST TYPE=flow|retract|temp "
@@ -3044,7 +3309,7 @@ class OznLabSensor:
     HELP_GROUPS = (
         ("Setup and health", ('OZNLAB_MENU', 'OZNLAB_SETUP', 'OZNLAB_CHECK', 'OZNLAB_STATUS', 'OZNLAB_REPORT', 'OZNLAB_HELP')),
         ("Every print (PRINT_START / PRINT_END)", ('OZNLAB_PRINT_START', 'OZNLAB_PRINT_END', 'OZNLAB_FILAMENT')),
-        ("Z: tap and bed mesh", ('OZNLAB_TAP', 'OZNLAB_MESH_SETUP', 'OZNLAB_MESH', 'OZNLAB_MESH_COMPARE',
+        ("Z: tap and bed mesh", ('OZNLAB_TAP', 'OZNLAB_TAP_ADJUST', 'OZNLAB_MESH_SETUP', 'OZNLAB_MESH', 'OZNLAB_MESH_COMPARE',
                                  'OZNLAB_HOME_TEST', 'OZNLAB_THERMAL_CAL')),
         ("Extrusion", ('OZNLAB_CALIBRATE_PA', 'OZNLAB_PA_SCALE', 'OZNLAB_TEST', 'OZNLAB_MAX_FLOW',
                        'OZNLAB_RETRACT_TEST', 'OZNLAB_TEMP_SCAN')),
@@ -3508,7 +3773,7 @@ class OznLabSensor:
                         self.reactor.monotonic())['state']
                 except Exception:
                     state = 'standby'
-                if state not in ('printing', 'paused'):
+                if state not in ('printing', 'paused') and self._job is None:
                     try:
                         self.gcode.run_script_from_command("TURN_OFF_HEATERS")
                         gcmd.respond_info("OznLab mesh: heaters off (KEEP_HOT=1 keeps them on)")
@@ -3584,10 +3849,13 @@ class OznLabSensor:
         if prof is None:
             return None
         try:
-            zm = bm_mod.ZMesh(prof['mesh_params'], name)
-        except TypeError:
-            zm = bm_mod.ZMesh(prof['mesh_params'])
-        zm.build_mesh(prof['points'])
+            try:
+                zm = bm_mod.ZMesh(prof['mesh_params'], name)
+            except TypeError:
+                zm = bm_mod.ZMesh(prof['mesh_params'])
+            zm.build_mesh(prof['points'])
+        except Exception as e:
+            raise self.gcode.error("oznlab compare: profile '%s' cannot be built (%s)" % (name, e))
         return zm
 
     cmd_MESH_COMPARE_help = ("Compare two bed mesh profiles point by point: "
@@ -3726,21 +3994,36 @@ class OznLabHoming:
         self.ta.setup_sos_filter(self.sos)
         probe.LookupZSteppers(config, self.ta.get_dispatch().add_stepper)
         self.z_min = probe.lookup_minimum_z(config)
+        if self.z_min > -0.3:
+            raise config.error("oznlab z_homing: [stepper_z] position_min is %.2f - the fine taps after the "
+                               "trigger go 0.3 mm below it, set position_min: -1" % self.z_min)
         self.param_helper = probe.ProbeParameterHelper(config)
         self.session = probe.SampleAveragingHelper(config, self.param_helper, self._start_session)
         self.last = None
         self._in_session = False
+        self.speed = config.getfloat('speed', 3., above=0.5, maxval=25., note_valid=False)
         if oz.z_homing_probe:
-            other = [sec for sec in ('probe', 'bltouch', 'smart_effector', 'load_cell_probe', 'dockable_probe',
-                                     'beacon', 'cartographer', 'scanner') if config.has_section(sec)]
-            other += config.get_prefix_sections('probe_eddy_current')
+            other = probe_sections(config)
             if other or self.printer.lookup_object('probe', None) is not None:
-                raise config.error("oznlab z_homing_probe: there is already a [probe] - set "
-                                   "z_homing_probe: 0 (tap homing can still be tested with OZNLAB_HOME_TEST)")
+                who = (" (%s)" % ", ".join("[%s]" % o for o in other)) if other else ""
+                raise config.error("oznlab z_homing_probe: there is already a probe%s and Klipper allows one. "
+                                   "Either set z_homing_probe: 0 - the nozzle still taps, and it can home Z next "
+                                   "to that probe with endstop_pin: oznlab:z_virtual_endstop in [stepper_z] - "
+                                   "or remove that probe's section to make the nozzle the probe" % who)
             # nozzle = probe: no XY offset, contact = Z 0 (squish comes from tap_adjust_z via OZNLAB_TAP)
             self.cmd_helper = probe.ProbeCommandHelper(config, self, None, can_set_z_offset=False)
             probe.HomingViaProbeHelper(config, 0.)
             self.printer.add_object('probe', self)
+        # endstop_pin: oznlab:z_virtual_endstop - for printers that keep another probe
+        self.endstop = OznLabZEndstop(self)
+
+    def home_speed_cap(self, speed):
+        """the kinematics cap Z at max_z_velocity; the expected slope must use the real speed"""
+        try:
+            th = self.printer.lookup_object('toolhead')
+            return min(speed, getattr(th.get_kinematics(), 'max_z_velocity', speed) or speed)
+        except Exception:
+            return speed
 
     def _check_firmware(self):
         # host updated, toolhead board not: say so instead of a bare "MCU Protocol error"
@@ -3877,6 +4160,7 @@ class OznLabHoming:
                 p = th.get_position(); p[2] += delta; th.set_position(p)
             finally:
                 oz._sync_gcode_pos()
+                if oz._tap is not None: oz._release_tap()     # a fine tap that raised left it set
         zs = [z + delta for z in zs]
         kept = zs[1:]
         if len(kept) >= 2 and abs(kept[-1] - kept[-2]) <= 0.01:
@@ -3923,3 +4207,104 @@ def load_config_prefix(config):
 
 def load_config(config):          # a plain [oznlab_sensor] section works too
     return OznLabSensor(config)
+
+
+_CHIPS = {}          # printer -> chip names registered by OznLabZEndstop (one per sensor)
+
+
+class OznLabZEndstop:
+    """[stepper_z] endstop_pin: oznlab:z_virtual_endstop
+    Home Z on the nozzle contact trigger while another module stays Klipper's [probe] (a BTT Eddy
+    that does the bed mesh, for example). Klipper treats it as a plain endstop: Z = position_endstop
+    (0) where the trigger fired. The trigger fires a few hundredths past the contact and the tap
+    afterwards measures the real contact, so that small offset is corrected there, not here."""
+    def __init__(self, homing):
+        self.h = homing; self.ta = homing.ta; self.oz = homing.oz
+        self.printer = homing.printer
+        self.chip = 'oznlab' if not _CHIPS.get(self.printer) else 'oznlab_' + self.oz.name
+        _CHIPS.setdefault(self.printer, []).append(self.chip)
+        self.printer.lookup_object('pins').register_chip(self.chip, self)
+        self.printer.register_event_handler('homing:home_rails_begin', self._rails_begin)
+        self.printer.register_event_handler('homing:home_rails_end', self._rails_end)
+        self.printer.register_event_handler('homing:homing_move_end', self._move_end)
+        self._speeds = []          # first move, then the second (slow) move of the same G28
+        self._live = None
+        self.used = False
+
+    # pins interface
+    def setup_pin(self, pin_type, pin_params):
+        if pin_type != 'endstop' or pin_params['pin'] != 'z_virtual_endstop':
+            raise self.printer.config_error("oznlab: only %s:z_virtual_endstop can be an endstop_pin" % self.chip)
+        if pin_params['invert'] or pin_params['pullup']:
+            raise self.printer.config_error("oznlab: no pullup or invert on %s:z_virtual_endstop" % self.chip)
+        self.used = True
+        return self
+
+    # MCU_endstop interface (the rail calls these)
+    def get_mcu(self):
+        return self.ta.get_mcu()
+    def add_stepper(self, stepper):
+        self.ta.get_dispatch().add_stepper(stepper)     # trsync ignores a stepper it already has
+    def get_steppers(self):
+        return self.ta.get_steppers()
+    def query_endstop(self, print_time):
+        return False
+
+    def _mine(self, rails):
+        for rail in rails:
+            for es, name in rail.get_endstops():
+                if es is self:
+                    return rail
+        return None
+
+    def _rails_begin(self, homing_state, rails):
+        rail = self._mine(rails)
+        if rail is None:
+            return
+        self._stop_live()
+        hi = rail.get_homing_info()
+        self._speeds = [hi.speed, hi.second_homing_speed]
+        self.oz._end_crash_test("Z homing")
+        # the LDC1612 is only sampled while a host client is subscribed; the MCU trigger needs data
+        live = self._live = {'on': True}                     # bound here: _stop_live sets self._live to None
+        self.oz.sensor.add_client(lambda msg: live['on'])
+        self.oz.reactor.pause(self.oz.reactor.monotonic() + 0.3)
+
+    def _move_end(self, hmove):
+        # sent after every homing move, failed ones too; keep the stream only between the two moves
+        if self._live is not None and not self._speeds:
+            self._stop_live()
+
+    def _rails_end(self, homing_state, rails):
+        if self._mine(rails) is None:
+            return
+        self._stop_live()
+        try:
+            self.oz._sync_gcode_pos()
+        except Exception:
+            pass
+
+    def home_start(self, print_time, sample_time, sample_count, rest_time, triggered=True):
+        speed = self._speeds.pop(0) if self._speeds else self.h.speed
+        speed = self.h.home_speed_cap(speed)
+        try:
+            self.h._prep_trigger(speed)            # the threshold follows the descent speed
+            return self.ta.home_start(print_time, sample_time, sample_count, rest_time, triggered)
+        except Exception:
+            self._stop_live()
+            raise
+
+    def home_wait(self, home_end_time):
+        try:
+            res = self.ta.home_wait(home_end_time)
+        except Exception:
+            self._stop_live()                      # a failed G28 sends no home_rails_end
+            raise
+        if not res:
+            self._stop_live()                      # "No trigger ... after full movement" follows
+        return res
+
+    def _stop_live(self):
+        if self._live is not None:
+            self._live['on'] = False; self._live = None
+        self._speeds = []

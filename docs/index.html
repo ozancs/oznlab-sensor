@@ -409,19 +409,24 @@
 git clone https://github.com/ozancs/oznlab-sensor.git
 cd oznlab-sensor
 ./install.sh</code></pre></div>
+<p>It asks one question: which board the coil is wired to (the I2C bus name depends on it). EBB36 / EBB42 v1.x or GEN2 are the two choices; another board takes the bus name from the table in step 2.5.</p>
 <p class="lbl ok">You should see</p>
-<p><code>Linking oznlab_sensor.py into ...</code>, <code>Adding the update manager entry to moonraker.conf</code> and <code>Done.</code> at the end. Mainsail and Fluidd now list <b>oznlab_sensor</b> in the Update Manager, so new versions arrive with one click.</p>
+<p><code>Linking oznlab_sensor.py into ...</code>, <code>Adding the update manager entry to moonraker.conf</code>, <code>Added [oznlab_sensor hotend] to printer.cfg (i2c_mcu: ..., i2c_bus: ...)</code>, then <code>Restarting Klipper</code> and <code>Done.</code> Mainsail and Fluidd now list <b>oznlab_sensor</b> in the Update Manager, so new versions arrive with one click.</p>
+<p>The installer finds your toolhead board's <code>[mcu ...]</code> section by itself, writes the section into <code>printer.cfg</code> (a backup <code>printer-&lt;date&gt;.cfg</code> is made first) and sets <code>position_min: -1</code> in <code>[stepper_z]</code>. Steps 3.2 to 3.4 show what it did, for checking or for doing it by hand.</p>
 <p class="lbl bad">If not</p>
 <div class="tw"><table class="fix">
 <tr><td><code>Klipper not found in /root/klipper</code></td><td>You used <code>sudo</code>. Run <code>./install.sh</code> without it.</td></tr>
 <tr><td><code>Klipper not found in ...</code></td><td>Klipper lives somewhere else: <code>KLIPPER_PATH=/path/to/klipper ./install.sh</code></td></tr>
 <tr><td><code>No moonraker.conf in ...</code></td><td>Several printers on one Pi (KIAUH). The installer prints the right folder: <code>CONFIG_PATH=~/printer_1_data/config ./install.sh</code></td></tr>
+<tr><td><code>Run again with BOARD=...</code></td><td>The script could not ask (no terminal). <code>BOARD=ebb ./install.sh</code>, <code>BOARD=gen2</code>, or <code>BOARD=&lt;bus name&gt;</code>.</td></tr>
+<tr><td><code>Several boards found</code></td><td>More than one toolhead-like <code>[mcu ...]</code>: <code>MCU=EBBCan BOARD=ebb ./install.sh</code></td></tr>
+<tr><td><code>[oznlab_sensor ...] is already in your config</code></td><td>Nothing was written, your section stays. If it sits in an included file, move it into printer.cfg: values the module saves (Z offset, PA scale) clash with an include at <code>SAVE_CONFIG</code>.</td></tr>
 </table></div>
 </section>
 
 <section class="sub" data-title="printer.cfg" hidden>
-<h3>3.2 Add the section to printer.cfg</h3>
-<p>Paste this into <code>printer.cfg</code>. Change three lines if your setup differs:</p>
+<h3>3.2 The section in printer.cfg</h3>
+<p>The installer added this at the end of <code>printer.cfg</code>. Doing it by hand? Paste it and change three lines if your setup differs:</p>
 <ul>
   <li><code>i2c_mcu</code>: the name of your toolhead board's <code>[mcu ...]</code> section. For <code>[mcu EBBCan]</code> it is <code>EBBCan</code>.</li>
   <li><code>i2c_bus</code>: from the table in step 2.5.</li>
@@ -432,7 +437,7 @@ i2c_mcu: EBBCan
 i2c_bus: i2c3_PB3_PB4
 i2c_address: 43
 data_rate: 200
-tap_adjust_z: 0.04
+tap_adjust_z: 0.04            # first layer too squished? babystep, then OZNLAB_TAP_ADJUST
 pa_speed: 3.0
 pa_duration: 1.5
 clog_ratio: 2.0
@@ -445,8 +450,8 @@ runout_gcode: PAUSE</code></pre></div>
 </section>
 
 <section class="sub" data-title="stepper_z" hidden>
-<h3>3.3 Change position_min in [stepper_z]</h3>
-<p>The tap moves slightly below zero, so this has to be negative. This is in your own <code>[stepper_z]</code> section in printer.cfg, not in the OznLab section. Find <code>position_min</code> there and set it to <code>-1</code>. If the line is missing, add it:</p>
+<h3>3.3 position_min in [stepper_z]</h3>
+<p>The tap moves slightly below zero, so this has to be negative. The installer sets it; check it if you did 3.2 by hand. This is in your own <code>[stepper_z]</code> section, not in the OznLab section. Find <code>position_min</code> there and set it to <code>-1</code>. If the line is missing, add it:</p>
 <p class="where">in <code>[stepper_z]</code></p>
 <div class="cb"><pre><code>[stepper_z]
 # ... your other [stepper_z] lines stay as they are ...
@@ -456,6 +461,7 @@ position_min: -1</code></pre></div>
 
 <section class="sub" data-title="Restart" hidden>
 <h3>3.4 Restart Klipper</h3>
+<p>The installer does this at the end. After a change by hand:</p>
 <p class="lbl run">Run (SSH)</p>
 <div class="cb"><pre><code>sudo systemctl restart klipper</code></pre></div>
 <p class="lbl ok">You should see</p>
@@ -467,6 +473,7 @@ position_min: -1</code></pre></div>
 <tr><td>Klipper error mentioning the MCU name</td><td><code>i2c_mcu</code> does not match the name of your <code>[mcu ...]</code> section.</td></tr>
 <tr><td>Klipper error mentioning <code>i2c_bus</code></td><td>The bus name does not exist on that MCU. Check step 2.5.</td></tr>
 </table></div>
+<div class="note">Keep the section in <code>printer.cfg</code> itself, not in a file you <code>[include]</code>: Klipper's <code>SAVE_CONFIG</code> refuses to write a value the module saves (Z offset, PA scale, mesh area) when the same line exists in an included file.</div>
 <div class="note">Whenever <code>oznlab_sensor.py</code> changes later, run this restart again.</div>
 </section>
 </section>
@@ -503,19 +510,16 @@ position_min: -1</code></pre></div>
 
 <section class="sub" data-title="Drive current" hidden>
 <h3>4.2 Drive current</h3>
-<p>Klipper sets how hard the coil is driven. Do this once, with the coil mounted in its final place: the right value depends on the distance to the heatsink.</p>
+<p>Klipper sets how hard the coil is driven; the right value depends on the distance to the heatsink. The module measures it by itself at the first start (the console says <code>drive current ... measured and applied</code>). This step only checks it. The <code>SAVE_CONFIG</code> of step 4.4 keeps it.</p>
 <p class="lbl run">Run</p>
-<div class="cb"><pre><code>LDC_CALIBRATE_DRIVE_CURRENT CHIP=hotend
-SAVE_CONFIG</code></pre></div>
-<p>Klipper restarts after <code>SAVE_CONFIG</code>. Then:</p>
 <div class="cb"><pre><code>OZNLAB_SETUP</code></pre></div>
 <p><small>Same as <code>OZNLAB_SETUP STEP=2</code>, which runs this step again any time.</small></p>
 <p class="lbl ok">You should see</p>
 <pre class="out">STEP 2/8  DRIVE CURRENT
-  [ OK ] no conversion errors, drive current is fine.</pre>
+  [ OK ] no conversion errors, drive current was measured at start (SAVE_CONFIG keeps it).</pre>
 <p class="lbl bad">If not</p>
 <div class="tw"><table class="fix">
-<tr><td><code>The sensor reported errors</code></td><td>Run the calibration again. If it stays, check the coil solder joints and the mount (2.3, 2.4).</td></tr>
+<tr><td><code>The sensor reported errors - measuring the drive current again</code></td><td>Run <code>SAVE_CONFIG</code>, then this step again. If the errors stay, check the coil solder joints and the mount (2.3, 2.4).</td></tr>
 </table></div>
 </section>
 
@@ -541,11 +545,11 @@ TAP #3  ...</pre>
 
 <section class="sub" data-title="Tap test" hidden>
 <h3>4.4 Tap test and Z offset</h3>
-<div class="need"><b>Before:</b> home (<code>G28</code>), heat the nozzle to printing temperature, clean the tip, move over the middle of the bed.</div>
+<div class="need"><b>Before:</b> clean the nozzle tip. Everything else the step does itself: it homes if needed, heats the nozzle to 150 &#176;C (or keeps a higher target you set) and moves over the middle of the bed.</div>
 <p class="lbl run">Run</p>
 <div class="cb"><pre><code>OZNLAB_SETUP
 SAVE_CONFIG</code></pre></div>
-<p><small>Same as <code>OZNLAB_SETUP STEP=4</code>, which runs this step again any time.</small></p>
+<p><small>Same as <code>OZNLAB_SETUP STEP=4</code>, which runs this step again any time. <code>TEMP=</code>, <code>X=</code> and <code>Y=</code> change the temperature and the spot.</small></p>
 <p>The nozzle taps the bed a few times and sets the Z offset. <code>SAVE_CONFIG</code> keeps it and restarts Klipper.</p>
 <p class="lbl ok">You should see</p>
 <pre class="out">STEP 4/8  TAP TEST AND Z OFFSET
@@ -553,7 +557,6 @@ OznLab tap: z offset ... set (5 taps within ... mm) - SAVE_CONFIG to keep it</pr
 <p>The <code>within</code> number is how far apart the taps were. The smaller the better; on our printer it is around 0.01 mm.</p>
 <p class="lbl bad">If not</p>
 <div class="tw"><table class="fix">
-<tr><td><code>Home first</code> / <code>Heat the nozzle</code></td><td>Do what it says, then run again.</td></tr>
 <tr><td><code>the taps disagree ... z offset NOT changed</code></td><td>Nothing was set, so skip <code>SAVE_CONFIG</code>. Clean the nozzle tip, wait a minute after heating, check that the coil cannot move, and run again.</td></tr>
 <tr><td><code>contact amplitude too small</code> or <code>no contact signature found</code></td><td>Check 4.3 first. If that is fine, the nozzle may not have reached the bed: check your Z endstop / probe height.</td></tr>
 <tr><td><code>TARGET=... is below [stepper_z] position_min</code></td><td>Do step 3.3.</td></tr>
@@ -562,17 +565,16 @@ OznLab tap: z offset ... set (5 taps within ... mm) - SAVE_CONFIG to keep it</pr
 
 <section class="sub" data-title="PA measure" hidden>
 <h3>4.5 Pressure advance: measure</h3>
-<div class="need"><b>Before:</b> filament loaded, nozzle at printing temperature, nozzle over the purge area or anywhere plastic can drop. It lifts Z by itself.</div>
+<div class="need"><b>Before:</b> filament loaded, nozzle over the purge area or anywhere plastic can drop. It heats and lifts Z by itself.</div>
 <p class="lbl run">Run</p>
-<div class="cb"><pre><code>OZNLAB_SETUP</code></pre></div>
-<p><small>Same as <code>OZNLAB_SETUP STEP=5</code>, which runs this step again any time.</small></p>
-<p>It extrudes a little filament in the air, about 10 s.</p>
+<div class="cb"><pre><code>OZNLAB_SETUP STEP=5 FILAMENT=PLA TEMP=215</code></pre></div>
+<p><small>Your filament and its printing temperature. It extrudes a little filament in the air, about 10 s.</small></p>
 <p class="lbl ok">You should see</p>
 <pre class="out">STEP 5/8  PRESSURE ADVANCE (measures the melt pressure, applies nothing)
 OznLab PA: this hotend fits the ... method, pa_method: ... saved (SAVE_CONFIG to keep it)
 OznLab PA: measured ... (tau ... s, ...) - not applied
   ...
-  measured tau = ... s, so pa_scale = PATTERN_PA / ...</pre>
+  measured tau = ... s now</pre>
 <p>The first measurement also picks the method that fits your hotend: <code>decay</code> for a slow pressure fall, <code>fast</code> for a hotend that drops the pressure within a few hundredths of a second. The <code>SAVE_CONFIG</code> in 4.6 keeps it.</p>
 <p class="lbl bad">If not</p>
 <div class="tw"><table class="fix">
@@ -580,7 +582,6 @@ OznLab PA: measured ... (tau ... s, ...) - not applied
 <tr><td><code>no reliable measurement</code></td><td>Run it again. Check that filament comes out while it runs.</td></tr>
 <tr><td><code>no reliable measurement</code> again</td><td>The reasons are in brackets in the same line. Run <code>OZNLAB_CALIBRATE_PA APPLY=0 VERBOSE=1</code> for the numbers of each run and post the output on Discord.</td></tr>
 </table></div>
-<div class="note">Do not restart Klipper between this step and 4.6. The next step uses this measurement.</div>
 </section>
 
 <section class="sub" data-title="PA pattern" hidden>
@@ -592,16 +593,17 @@ OznLab PA: measured ... (tau ... s, ...) - not applied
   <li>Find the cleanest line and read its PA value.</li>
   <li>Put <b>your</b> value in place of <code>&lt;your_pa&gt;</code> and run:</li>
 </ol>
-<div class="cb"><pre><code>OZNLAB_PA_SCALE PATTERN_PA=&lt;your_pa&gt; TYPE=&lt;filament&gt;
+<div class="cb"><pre><code>OZNLAB_PA_SCALE PATTERN_PA=&lt;your_pa&gt; TYPE=&lt;filament&gt; TEMP=&lt;same temperature&gt;
 SAVE_CONFIG</code></pre></div>
-<p>Use the filament type as the slicer names it, for example <code>TYPE=PLA</code> or <code>TYPE=ASA</code>. Each filament type gets its own scale (<code>pa_scale_pla</code>, <code>pa_scale_asa</code> ...). Repeat this step once for every filament type you print.</p>
+<p>With the same filament still loaded: it heats to <code>TEMP</code>, measures the pressure again right then and divides your value by that measurement. The measurement moves a little with the state of the melt zone, so the scale is always taken from a fresh one, never from an earlier step. Use the filament type as the slicer names it, for example <code>TYPE=PLA</code> or <code>TYPE=ASA</code>. Each filament type gets its own scale (<code>pa_scale_pla</code>, <code>pa_scale_asa</code> ...). Repeat this step once for every filament type you print.</p>
 <p class="lbl ok">You should see</p>
-<pre class="out">OznLab: pa_scale_asa ... (= ... / tau ..., pa_method ...), for ASA - SAVE_CONFIG to keep it</pre>
-<p>This command only does the math. It does not print or move anything.</p>
+<pre class="out">OznLab PA: measured ... (tau ... s, ...) - not applied
+OznLab: pa_scale_asa ... (= ... / tau ..., pa_method ...), for ASA - SAVE_CONFIG to keep it</pre>
 <p class="lbl bad">If not</p>
 <div class="tw"><table class="fix">
-<tr><td><code>run OZNLAB_CALIBRATE_PA first</code></td><td>Klipper was restarted after 4.5. Do 4.5 again, then this command. No need to print the pattern again.</td></tr>
-<tr><td><code>computed pa_scale ... is out of range</code></td><td>Check the value you typed, then do 4.5 again.</td></tr>
+<tr><td><code>no reliable tau just now</code></td><td>Nothing stored. Check that filament comes out, prime a little, run again.</td></tr>
+<tr><td><code>computed pa_scale ... is out of range</code></td><td>Check the value you typed, then run again.</td></tr>
+<tr><td><code>pa_scale_... is set in an included file</code></td><td>Delete that line from the included file, or move the whole section into printer.cfg (step 3.2).</td></tr>
 </table></div>
 <div class="note">Changed the nozzle or the hotend? Do 4.5 and this step again for every filament. The scale belongs to one filament on one nozzle.</div>
 <div class="note">In the slicer's filament profile, turn <b>"Enable pressure advance"</b> off. From now on PA is measured at the start of every print, and the slicer would overwrite it.</div>
@@ -615,14 +617,13 @@ SAVE_CONFIG</code></pre></div>
 
 <section class="sub" data-title="PRINT_START">
 <h3>5.1 PRINT_START</h3>
-<p>First, so the sensor knows which filament is printing: in OrcaSlicer, Printer settings, Machine G-code, add this to the end of your <code>PRINT_START</code> line:</p>
-<div class="cb"><pre><code> FILAMENT={filament_type[initial_extruder]}</code></pre></div>
-<p>Then put this in your <b>PRINT_START</b> macro, after the nozzle has reached printing temperature and before the prime line. Replace <code>PA_X</code> and <code>PA_Y</code> with a spot over your purge bucket or any place where plastic can drop.</p>
+<p>Put this in your <b>PRINT_START</b> macro, after the nozzle has reached printing temperature and before the prime line:</p>
 <div class="cb"><pre><code>    # no probe? load the nozzle mesh first (step 6.5)
     #BED_MESH_PROFILE LOAD=default
 
-    OZNLAB_PRINT_START FILAMENT="{params.FILAMENT|default('')}" PA_X=300 PA_Y=300</code></pre></div>
-<p>That one line tells the sensor the filament, measures pressure advance over the purge area, waits 15 s for the hotend to settle and taps the bed centre for the Z offset. <code>TAP_X</code> / <code>TAP_Y</code> pick another tap spot, <code>SETTLE=</code> another wait.</p>
+    OZNLAB_PRINT_START</code></pre></div>
+<p>That one line reads the filament type from the gcode file (OrcaSlicer, PrusaSlicer, SuperSlicer and Bambu Studio write it), measures pressure advance in the air over the front left corner of the bed, waits 15 s for the hotend to settle and taps the bed centre for the Z offset. Purge bucket? <code>PA_X=</code> <code>PA_Y=</code> put the PA measurement there. <code>TAP_X</code> / <code>TAP_Y</code> pick another tap spot, <code>SETTLE=</code> another wait.</p>
+<p><small>Cura, or the filament type is not in your files? In the slicer's start G-code add <code>FILAMENT={filament_type[initial_extruder]}</code> (Orca syntax) to the PRINT_START line and pass it on: <code>OZNLAB_PRINT_START FILAMENT="{params.FILAMENT|default('')}"</code>.</small></p>
 <p>If a filament has no scale of its own yet, the console says so at the start of the print and the default <code>pa_scale</code> is used.</p>
 <p>Then your prime line, and as the <b>last lines</b> of PRINT_START:</p>
 <div class="cb"><pre><code>    OZNLAB_MONITOR
@@ -662,7 +663,10 @@ OznLab monitor: on - clog and runout watch for this print</pre>
 </table></div>
 <p>When the print ends the console shows a short report: Z offset, PA, clog / runout and crash events, and the peak temperatures. <code>OZNLAB_REPORT</code> shows it again.</p>
 <p><small>Printing from OctoPrint or another host that streams G-code? Add <code>OZNLAB_REPORT</code> as the last line of PRINT_END, the end of the print is not detected otherwise.</small></p>
-<div class="note"><b>First layer:</b> too squished, raise <code>tap_adjust_z</code> in the config. Too loose, lower it.</div>
+<div class="note"><b>First layer:</b> babystep Z during the print until it looks right, then in the console:</div>
+<div class="cb"><pre><code>OZNLAB_TAP_ADJUST
+SAVE_CONFIG</code></pre></div>
+<p>It folds the babystep into <code>tap_adjust_z</code>, so every next tap lands there. (By hand: too squished, raise <code>tap_adjust_z</code>; too loose, lower it.)</p>
 </section>
 </section>
 
@@ -784,11 +788,12 @@ tap_speed: 2.0</code></pre></div>
 <p><small>If Klipper then refuses to start with <code>unknown command config_trigger_analog</code>, the toolhead firmware is too old: remove the line again.</small></p>
 
 <p class="lbl run">2. Test run</p>
-<div class="need"><b>Before:</b> home with your current method (<code>G28</code>), nozzle at 150 &#176;C or printing temperature and clean, over the middle of the bed.</div>
+<div class="need"><b>Before:</b> nozzle tip clean. The step homes with your current method, heats the nozzle and moves over the middle of the bed by itself. Do this test <b>before</b> you change <code>endstop_pin</code>: it needs a Z that still homes the old way.</div>
 <div class="cb"><pre><code>OZNLAB_SETUP STEP=6</code></pre></div>
 <p>It does a test descent without changing anything:</p>
 <pre class="out">OznLab home test: OK - stopped ... mm past the bed, contact at z=...</pre>
-<p>If that is OK it prints the exact lines for your printer. They look like this:</p>
+<p>If that is OK it prints the exact lines for your printer. There are two routes, and the step picks the one for your printer:</p>
+<p class="lbl use">A. No other probe: the nozzle becomes Klipper's probe</p>
 <p class="where">in <code>[oznlab_sensor hotend]</code></p>
 <div class="cb"><pre><code>z_homing_probe: 1</code></pre></div>
 <p class="where">in <code>[stepper_z]</code></p>
@@ -800,9 +805,18 @@ position_min: -1</code></pre></div>
 <div class="cb"><pre><code>[safe_z_home]
 home_xy_position: &lt;bed_center_x&gt;, &lt;bed_center_y&gt;
 z_hop: 5</code></pre></div>
-<div class="note">Klipper allows one probe. If you have another one, disable its section <b>and</b> delete its <code>#*#</code> lines at the bottom of printer.cfg (keep a backup). Only commenting those lines out makes Klipper ignore the whole saved block.</div>
+<p class="lbl use">B. A probe already there (BTT Eddy, Beacon, BLTouch ...): it stays, the nozzle homes next to it</p>
+<p>Klipper allows one probe, and it keeps doing the mesh. Z homes on the nozzle through its own endstop pin. Only <code>[stepper_z]</code> changes; <code>z_homing_probe</code> stays 0:</p>
+<p class="where">in <code>[stepper_z]</code></p>
+<div class="cb"><pre><code>endstop_pin: oznlab:z_virtual_endstop
+position_endstop: 0
+homing_speed: 3
+homing_retract_dist: 0
+position_min: -1</code></pre></div>
+<p><small>The trigger stops a few hundredths past the contact, and Z 0 is set there. The tap in PRINT_START measures the real contact afterwards, so this does not end up in your first layer. Route B is new in v0.9.10 and was tested in simulation only so far; tell us on Discord how it went.</small></p>
+<div class="note">Want to drop the other probe instead (route A)? Disable its section <b>and</b> delete its <code>#*#</code> lines at the bottom of printer.cfg (keep a backup). Only commenting those lines out makes Klipper ignore the whole saved block.</div>
 
-<p class="lbl use">All together</p>
+<p class="lbl use">All together (route A)</p>
 <p>After step 2 these are the only lines that change. Everything else in those sections stays as it is.</p>
 <div class="cb"><pre><code>[oznlab_sensor hotend]
 # your other lines stay
@@ -832,6 +846,9 @@ SAVE_CONFIG</code></pre></div>
 <div class="tw"><table class="fix">
 <tr><td><code>too close to the noise floor</code></td><td>Heat the nozzle. The sensor is less sensitive cold, and the command refuses to move rather than risk a missed trigger.</td></tr>
 <tr><td><code>home first (G28)</code> right after G28</td><td>Z did not home. Read what <code>G28</code> printed in the console, and compare your config with the block above.</td></tr>
+<tr><td><code>endstop_pin: probe:z_virtual_endstop, but nothing in the config is a probe</code></td><td>Route A needs <code>z_homing_probe: 1</code>; route B uses <code>oznlab:z_virtual_endstop</code>. Or put your old endstop pin back.</td></tr>
+<tr><td><code>there is already a probe ... Klipper allows one</code></td><td>You set <code>z_homing_probe: 1</code> next to another probe. Take route B, or remove that probe's section.</td></tr>
+<tr><td><code>Unknown pin chip name 'probe'</code></td><td>Same thing said by Klipper: nothing registered as the probe. See the two rows above.</td></tr>
 <tr><td><code>stopped late</code> (0.3 mm or more)</td><td>Check that the coil cannot move, heat the nozzle, run again.</td></tr>
 </table></div>
 <p><small>On our printer: the trigger stops 0.05 to 0.09 mm past contact at 3 mm/s. Three G28 in a row with the nozzle put Z 0 within 0.007 mm of each other and within 0.01 mm of the tap contact.</small></p>
@@ -840,7 +857,7 @@ SAVE_CONFIG</code></pre></div>
 <section class="sub" data-title="Thermal" hidden>
 <div class="gain"><span class="gain-k">You get</span> how much the nozzle drops per &#176;C as the hotend heats up.</div>
 <h3>6.7 Thermal calibration</h3>
-<p>Taps at several temperatures and measures how much the nozzle moves per &#176;C. Not needed if you tap at printing temperature every print (step 5.1 does). Unload the filament first and park over a clean spot.</p>
+<p>Taps at several temperatures and measures how much the nozzle moves per &#176;C. Not needed if you tap at printing temperature every print (step 5.1 does). Unload the filament first and park over a clean spot. It waits 40 s at each temperature (<code>SETTLE=</code> changes that); on our printer the result was 0.075 &#181;m per &#176;C, so small that tapping at 150 &#176;C and printing at 255 &#176;C is off by under 0.01 mm.</p>
 <div class="cb"><pre><code>OZNLAB_THERMAL_CAL
 SAVE_CONFIG</code></pre></div>
 </section>
@@ -862,8 +879,9 @@ SAVE_CONFIG</code></pre></div>
 <tr><td><code>OZNLAB_STATUS</code></td><td>1 s reading: frequency, noise, errors.</td></tr>
 <tr><td><code>OZNLAB_WATCH</code></td><td>Live TAP / PRESS events on the console. <code>OFF=1</code> stops it.</td></tr>
 <tr><td><code>OZNLAB_TAP [SAVE=0]</code></td><td>Nozzle tap, sets the Z offset. <code>SAVE=0</code>: this print only.</td></tr>
-<tr><td><code>OZNLAB_CALIBRATE_PA</code></td><td>Measures and applies pressure advance.</td></tr>
-<tr><td><code>OZNLAB_PA_SCALE PATTERN_PA=&lt;your_pa&gt;</code></td><td>Sets <code>pa_scale</code> from your pattern test result.</td></tr>
+<tr><td><code>OZNLAB_TAP_ADJUST</code></td><td>Folds the babystep of this print into <code>tap_adjust_z</code>.</td></tr>
+<tr><td><code>OZNLAB_CALIBRATE_PA [FILAMENT=] [TEMP=]</code></td><td>Measures and applies pressure advance. <code>FILAMENT</code> names it, <code>TEMP</code> heats first.</td></tr>
+<tr><td><code>OZNLAB_PA_SCALE PATTERN_PA=&lt;your_pa&gt; [TYPE=] [TEMP=]</code></td><td>Measures again and sets the filament's <code>pa_scale</code> from your pattern test result.</td></tr>
 <tr><td><code>OZNLAB_MONITOR</code></td><td>Clog / runout watch. <code>OFF=1</code>, <code>STATUS=1</code>.</td></tr>
 <tr><td><code>OZNLAB_MESH_SETUP</code></td><td>Mesh area wizard (popup).</td></tr>
 <tr><td><code>OZNLAB_MESH [ADAPTIVE=1]</code></td><td>Bed mesh with the nozzle.</td></tr>

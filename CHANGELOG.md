@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.9.10
+
+Setup with fewer things to type, after watching a second printer go through it.
+
+- `install.sh` writes the `[oznlab_sensor hotend]` section into printer.cfg (finds the toolhead `[mcu ...]`, asks which board for the I2C bus, backs the file up first) and sets `[stepper_z] position_min: -1`. `BOARD=ebb|gen2|<bus>` and `MCU=` skip the questions
+- The drive current is measured by the module at the first start and applied; `SAVE_CONFIG` keeps it. Setup step 2 only checks
+- Setup step 4 (tap) and step 6 (Z homing test) home, heat and move over the bed centre by themselves. `TEMP=`, `X=`, `Y=` override
+- `OZNLAB_CALIBRATE_PA FILAMENT=PLA TEMP=215` and `OZNLAB_SETUP STEP=5 FILAMENT=PLA TEMP=215`: one line instead of three
+- `OZNLAB_PA_SCALE` measures tau right then (same filament, `TEMP=` heats first) instead of using an earlier measurement, so a Klipper restart between the pattern print and this command no longer matters
+- `OZNLAB_PRINT_START` needs no parameters: the filament type comes from the gcode file (Orca, Prusa, Super, Bambu write `filament_type`), the PA measurement defaults to the air over the bed's front left corner. `FILAMENT=` and `PA_X= PA_Y=` still override
+- New `OZNLAB_TAP_ADJUST`: babystep during the print, run it, `SAVE_CONFIG`: the babystep is folded into `tap_adjust_z`
+- New `[stepper_z] endstop_pin: oznlab:z_virtual_endstop`: Z homes on the nozzle while another probe (BTT Eddy, Beacon ...) stays Klipper's probe for the mesh. Route B in guide 6.6, simulated only so far
+- Clear config errors instead of Klipper's: `probe:z_virtual_endstop` with nothing being a probe; `z_homing_probe: 1` next to another probe (`probe_eddy_ng` and others are recognised now); `position_min` too high for nozzle homing
+- Values this module saves next to a copy in an included file: `OZNLAB_PA_SCALE` and `OZNLAB_TAP_ADJUST` say so instead of a failing `SAVE_CONFIG`; `OZNLAB_CHECK` warns when the section is in an include
+- `OZNLAB_THERMAL_CAL` waits 40 s per temperature instead of 90
+- Clog / runout and crash watch: the filament speed is taken over 50 ms instead of one sample. One sample moves the filament only a few microsteps, so the speed jittered by 30 to 100 % on ungeared extruders or at 400 samples/s and the "steady flow" test that gates every decision rarely passed. The baseline observed at the end of a travel is frozen while an anomaly builds and may move by a bounded amount per gap, so a slower decay (a clog) is not learned as baseline
+- Fixes: `OZNLAB_PA_SCALE` with a prime or duration over `max_extrude_only_distance` says so instead of aborting; a fine tap that raises during nozzle homing no longer blocks every later measurement; a failed setup step is repeated by the next `OZNLAB_SETUP` instead of skipped; `OZNLAB_PRINT_END` closes the print report on hosts that stream G-code; `OZNLAB_MESH` inside PRINT_START on such hosts no longer turns the heaters off; `OZNLAB_MESH_COMPARE` with a broken profile reports instead of shutting Klipper down; a crash test that saw no samples ends when asked again
+- New `release.sh` for us: refuses to tag anything but the pushed main HEAD (v0.9.8's tag pointed at an older commit)
+- Guide: install, setup steps 4.2 to 4.6, 5.1, 5.3 and 6.6 rewritten for the above
+
 ## v0.9.9
 
 - New default `pa_method: auto`: the first PA measurement fits every run with decay, and with fast when decay does not fit, keeps the method with more good runs and saves it (`SAVE_CONFIG` keeps it). Tested on recorded data: a slow hotend picks decay, a hotend whose pressure drops in 15 to 20 ms picks fast. A `pa_method` line in your config is left alone

@@ -31,15 +31,19 @@ cd oznlab-sensor
 Run it as your normal user, not with `sudo`. Several printers on one Pi:
 `CONFIG_PATH=~/printer_1_data/config ./install.sh`.
 
-Then add the `[oznlab_sensor hotend]` section to `printer.cfg`. `config/oznlab_sensor.cfg`
-has every option and is safe to copy next to `printer.cfg` and `[include]`. Restart
-Klipper and run `OZNLAB_SETUP` (or `OZNLAB_MENU`) in the console.
+It asks which board the coil is wired to, writes the `[oznlab_sensor hotend]` section
+into `printer.cfg` and restarts Klipper (`BOARD=ebb ./install.sh` skips the question).
+`config/oznlab_sensor.cfg` lists every option. Then run `OZNLAB_SETUP` (or `OZNLAB_MENU`)
+in the console, one step per call.
 
 In PRINT_START, after heating and before the prime line:
 
 ```
-OZNLAB_PRINT_START FILAMENT="{params.FILAMENT|default('')}" PA_X=<purge x> PA_Y=<purge y>
+OZNLAB_PRINT_START
 ```
+
+(filament type from the gcode file; `PA_X= PA_Y=` for a purge bucket, `FILAMENT=` for a
+slicer that does not write the type into the file)
 
 and `OZNLAB_MONITOR` after the prime line, `OZNLAB_PRINT_END` in PRINT_END and CANCEL_PRINT.
 

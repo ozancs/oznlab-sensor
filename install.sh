@@ -3,7 +3,10 @@
 #  - links oznlab_sensor.py into Klipper (so updates of this folder reach Klipper)
 #  - hides the link from Klipper's own git status
 #  - adds the Moonraker update manager entry (Update button in Mainsail / Fluidd)
+#  - writes the [oznlab_sensor hotend] section into printer.cfg (asks which board the coil is on)
 # Run it again at any time; it only changes what is missing.
+#   BOARD=ebb ./install.sh        no questions: ebb | gen2 | <i2c bus name>
+#   MCU=EBBCan ./install.sh       the [mcu ...] the coil is wired to, when there are several
 set -e
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,6 +53,17 @@ CONF
     sudo systemctl restart moonraker || echo "Could not restart Moonraker - restart it from Mainsail / Fluidd"
 fi
 
+echo "Config"
+if CONFIG_PATH="$CONFIG" python3 "$REPO/configure.py"; then
+    CFG_OK=1
+else
+    CFG_OK=0
+fi
+
 echo "Restarting Klipper"
 sudo systemctl restart klipper || echo "Could not restart the klipper service - use RESTART in the console"
-echo "Done. Next: add the [oznlab_sensor hotend] section to printer.cfg (see config/oznlab_sensor.cfg)."
+if [ "$CFG_OK" = 1 ]; then
+    echo "Done. Next: OZNLAB_SETUP in the console, one step per call."
+else
+    echo "Done, but the config section is not written yet (see above). Then: OZNLAB_SETUP in the console."
+fi
