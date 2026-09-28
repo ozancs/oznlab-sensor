@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.9.12
+
+- The soft taps of v0.9.11 failed with "only 9 samples after the contact" on a printer with 100 samples/s: at a low data rate the ramp fit cannot get its samples within 0.1 mm at 2 mm/s. The taps after the first now descend slower instead of deeper (0.7 mm/s at 100 samples/s, 1.4 at 200, 2 at 400), so they stay about 0.15 mm past the contact at any data rate; the record's lost end and the deceleration are counted in. A short tap that still fails is repeated at full depth instead of failing the command
+- `OZNLAB_MESH` about twice as fast: the throw-away tap per point is gone (the first, soft tap counts; a pair that disagrees still gets a third), the slow part of a descent starts 0.15 mm above the expected contact instead of 0.3 to 0.6, shorter waits around each tap, and the travel between points is 1 mm up (`mesh_travel_z`, was 2) or 0.5 mm above the highest contact so far. In the simulator a 5x5 went from about 3 min to 1.5 on a Z axis with 45 mm/s2
+- Guide 6.5: the time per point
+
 ## v0.9.11
 
 - Softer taps: only the first descent of a tap goes the full 0.3 mm past the bed to find the contact. The others go just past it (about 0.1 mm at 2 mm/s and 200 samples/s: the 12 samples the fit needs, `DEPTH=` on `OZNLAB_TAP` overrides). Same for the fine taps after nozzle homing and for the mesh. The contact fit uses only that first stretch, so the numbers do not change, the push on the toolhead and the bed does. Suggested by Raidy

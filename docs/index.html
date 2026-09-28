@@ -780,7 +780,7 @@ SAVE_CONFIG</code></pre></div>
 <p><b>Speed:</b> these go in <code>[oznlab_sensor hotend]</code>. The values below are the defaults.</p>
 <div class="cb"><pre><code>mesh_speed: 150
 mesh_samples: 2
-mesh_travel_z: 2
+mesh_travel_z: 1
 tap_speed: 2.0</code></pre></div>
 <div class="tw"><table>
 <tr><td><code>mesh_speed</code></td><td>XY travel between points, mm/s</td></tr>
@@ -788,7 +788,7 @@ tap_speed: 2.0</code></pre></div>
 <tr><td><code>mesh_travel_z</code></td><td>lift between points, mm</td></tr>
 <tr><td><code>tap_speed</code></td><td>descent speed, mm/s. Higher values are not tested yet</td></tr>
 </table></div>
-<p>A 5x5 grid takes about 3 minutes with the defaults. On a small bed, a smaller grid and <code>mesh_samples: 1</code> make it much quicker.</p>
+<p>A 5x5 grid takes about 1.5 minutes with the defaults (two taps per point, a third when they disagree). On a small bed, a smaller grid and <code>mesh_samples: 1</code> make it much quicker.</p>
 <p><small>On our printer the nozzle mesh and a BTT Eddy mesh agreed within 0.03 mm after removing offset and tilt.</small></p>
 </section>
 

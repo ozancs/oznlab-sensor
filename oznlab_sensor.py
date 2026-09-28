@@ -42,7 +42,7 @@
 #   #z_homing_probe: 1       # ... and be Klipper's [probe]: endstop_pin: probe:z_virtual_endstop in [stepper_z]
 #                            # (leave 0 on a printer that already has a probe, e.g. a BTT Eddy)
 #   #home_trigger_frac: 0.5  #home_noise_sigma: 6  #home_lowpass: 12  #home_assume_sens: 1.5
-#   #mesh_samples: 2  #mesh_speed: 150  #mesh_travel_z: 2  #mesh_min_temp: 180  #mesh_profile:
+#   #mesh_samples: 2  #mesh_speed: 150  #mesh_travel_z: 1  #mesh_min_temp: 180  #mesh_profile:
 #   setup_step is written by OZNLAB_SETUP (so SAVE_CONFIG's restart does not lose your place)
 #   thermal_um_c / thermal_ref_t are written by OZNLAB_THERMAL_CAL - informational only, nothing
 #   applies them yet (tap at printing temperature and you do not need them)
@@ -98,7 +98,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.9.11"
+VERSION = "0.9.12"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -333,7 +333,7 @@ class OznLabSensor:
                                "(run OZNLAB_MESH_SETUP again)")
         self.mesh_samples = config.getint('mesh_samples', 2, minval=1, maxval=5)   # kept taps per point
         self.mesh_speed = config.getfloat('mesh_speed', 150., above=10.)          # mm/s between points
-        self.mesh_travel_z = config.getfloat('mesh_travel_z', 2., above=0.5, maxval=20.)
+        self.mesh_travel_z = config.getfloat('mesh_travel_z', 1., above=0.5, maxval=20.)
         # below this the plastic on the tip is rubbery and compresses under every tap (measured:
         # 150 C drifted 0.16 mm over 10 taps, 250 C stayed within 0.015 mm)
         self.mesh_min_temp = config.getfloat('mesh_min_temp', 180., minval=0.)
@@ -949,15 +949,20 @@ class OznLabSensor:
             logging.exception("oznlab tap: could not read the bed mesh")
             return 0.
 
-    def _tap_depth(self, speed):
-        """how far past a known contact a tap needs to go: the ramp fit wants about 12 samples
-        after the contact, at least 0.08 mm. Every tap after the first goes only this deep, so the
-        toolhead and the bed are pushed a fraction of the first tap's 0.3 mm."""
+    def _soft_tap(self, speed, accel=100.):
+        """(speed, depth) for the taps after the first, which only need to go a little past a contact
+        that is already known. The ramp fit wants 10 samples after the contact, so at a low data
+        rate the descent is slowed down instead of made deeper: 14 samples within 0.1 mm. The record
+        stops 10 ms before the move ends and the last v^2/2a is the deceleration, both are added,
+        plus a margin for the contact moving between taps. About 0.15 mm at any data rate."""
         try:
             sps = float(self.sensor.get_samples_per_second()) or float(self.sensor.data_rate)
         except Exception:
             sps = float(self.sensor.data_rate)
-        return max(0.08, 12. * speed / max(sps, 1.))
+        sps = max(sps, 1.)
+        v = max(0.3, min(speed, 0.1 * sps / 14.))
+        lost = 0.01 * v + v * v / (2. * max(accel, 1.))
+        return v, max(0.1, 14. * v / sps + lost + 0.03)
 
     def _tap_once(self, toolhead, z_start, z_target, speed, accel, lift_speed=10.,
                   settle=0.3, pre=0.4, post=0.35):
@@ -1046,17 +1051,25 @@ class OznLabSensor:
             raise gcmd.error("oznlab tap: TARGET=%.2f is below [stepper_z] position_min=%.2f - "
                              "set position_min to about -1 or raise TARGET" % (z_target, z_min))
         lift_speed = 10.
-        depth = self._gf(gcmd, 'DEPTH', self._tap_depth(speed), minval=0.05, maxval=0.6)
+        v_soft, depth = self._soft_tap(speed, accel)
+        depth = self._gf(gcmd, 'DEPTH', depth, minval=0.05, maxval=0.6)
         results = []; sens = []
         try:
             z_c = None
             for i in range(samples + discard):
                 if z_c is None:
-                    s0, t0 = z_start, z_target                # the first descent finds the contact
-                else:                                         # the others go just past it
+                    s0, t0, v0 = z_start, z_target, speed     # the first descent finds the contact
+                else:                                         # the others go just past it, slower
                     s0 = min(z_start, z_c + 0.4)
-                    t0 = max(z_target, z_c - depth)
-                z_c, hz_per_um, amp, f_pre = self._tap_once(toolhead, s0, t0, speed, accel, lift_speed)
+                    t0 = max(z_target, z_c - depth); v0 = v_soft
+                try:
+                    z_c, hz_per_um, amp, f_pre = self._tap_once(toolhead, s0, t0, v0, accel, lift_speed)
+                except self.gcode.error as e:
+                    if t0 == z_target: raise
+                    # the short descent did not give the fit enough: this one goes the full way
+                    self._detail(gcmd, "oznlab tap: short tap retried at full depth (%s)" % e)
+                    s0, t0, v0 = z_start, z_target, speed
+                    z_c, hz_per_um, amp, f_pre = self._tap_once(toolhead, s0, t0, v0, accel, lift_speed)
                 if i < discard:
                     self._detail(gcmd, "oznlab tap: priming tap (not used) z=%.4f" % z_c)
                     continue
@@ -2888,7 +2901,7 @@ class OznLabSensor:
                   "  1. OZNLAB_MESH_SETUP   - a popup walks the nozzle to the four corners of the\n"
                   "     usable bed, then SAVE_CONFIG (adds [bed_mesh] if you have none)\n"
                   "  2. Nozzle at printing temperature and brushed, bed at printing temperature:\n"
-                  "     OZNLAB_MESH          - 5x5 takes about 3 min, then SAVE_CONFIG\n"
+                  "     OZNLAB_MESH          - 5x5 takes about 1.5 min, then SAVE_CONFIG\n"
                   "  3. In PRINT_START, before OZNLAB_TAP:  BED_MESH_PROFILE LOAD=default\n"
                   "     (Klipper does not load a profile by itself), or OZNLAB_MESH ADAPTIVE=1 for a\n"
                   "     fresh mesh under every print.\n"
@@ -3518,7 +3531,7 @@ class OznLabSensor:
                          [], [("Cancel", "%s CANCEL=1" % c, "error"), ("Start again", "%s RESET=1" % c, "primary")])
             return
         texts = ["Mesh area: X %.1f .. %.1f, Y %.1f .. %.1f  (%.0f x %.0f mm)." % (x0, x1, y0, y1, x1 - x0, y1 - y0),
-                 "Pick the grid. Each point takes about 7 s: 3x3 ~ 1 min, 5x5 ~ 3 min, 7x7 ~ 6 min, 9x9 ~ 10 min.",
+                 "Pick the grid. Each point takes about 3 s: 3x3 ~ 30 s, 5x5 ~ 1.5 min, 7x7 ~ 2.5 min, 9x9 ~ 4 min.",
                  "With ADAPTIVE=1 only the part under the print is measured, so a large grid is fine."]
         rows = [[("%dx%d" % (n, n), "%s SAVE=1 COUNT=%d" % (c, n), "primary" if n == 5 else "secondary")
                  for n in (3, 5, 7, 9)]]
@@ -3567,9 +3580,10 @@ class OznLabSensor:
         Descents start just above the expected contact (neighbours) - most of the speed-up.
         Returns (z, spread of the kept taps, all taps incl. the squash tap)."""
         full = (self.tap_start_z, self.tap_target_z)
-        def one(start, target, settle, pre):
-            z = self._tap_once(toolhead, start, target, speed, accel,
-                               settle=settle, pre=pre, post=0.2)[0]
+        v_soft, depth = self._soft_tap(speed, accel)
+        def one(start, target, settle, pre, v=speed):
+            z = self._tap_once(toolhead, start, target, v, accel,
+                               settle=settle, pre=pre, post=0.12)[0]
             if z > start - 0.03:
                 raise self.printer.command_error("contact at the very start of the descent")
             return z
@@ -3584,37 +3598,39 @@ class OznLabSensor:
                     last = e
                     logging.info("oznlab mesh: full tap attempt %d failed: %s", attempt + 1, e)
             raise last
-        def tap(ref, margin, settle=0.1, pre=0.25):
+        def tap(ref, margin, settle=0.1, pre=0.12):
+            # short descent: the slow part starts just above the expected contact, the lift to
+            # there is at lift speed. A contact outside the window falls back to a full descent.
             if ref is None:
                 return full_tap(settle, pre)
             start = min(self.tap_start_z, ref + margin)
-            target = max(self.tap_target_z, ref - self._tap_depth(speed))
+            target = max(self.tap_target_z, ref - depth)
             try:
-                return one(start, target, settle, pre)
+                return one(start, target, settle, pre, v_soft)
             except self.printer.command_error as e:
                 logging.info("oznlab mesh: short tap failed (%s), full descent", e)
                 return full_tap(settle, pre)
-        taps = [tap(pred, 0.6, settle=0.3, pre=0.3)]
-        kept = []
+        # the first tap of a point counts: with a soft first tap there is no hard press to
+        # relax from, so no throw-away tap. A pair that disagrees gets a third one below.
+        taps = [tap(pred, 0.3, settle=0.2, pre=0.15)]
+        kept = [taps[0]]
         while True:
-            ref = kept[-1] if kept else taps[0]
-            z = tap(ref, 0.3 if kept else 0.4); kept.append(z); taps.append(z)
             n = len(kept)
-            if n < samples:
-                continue
-            kk = sorted(kept)
-            med = kk[n // 2] if n % 2 else 0.5 * (kk[n // 2 - 1] + kk[n // 2])
-            if samples == 1:
-                ok = abs(kept[0] - taps[0]) <= 0.03
-            else:
-                # the tightest pair among the kept taps decides
-                best = min(kk[k + 1] - kk[k] for k in range(n - 1))
-                ok = best <= 0.015
-                if ok and n > 2:
-                    k = min(range(n - 1), key=lambda k: kk[k + 1] - kk[k])
-                    med = 0.5 * (kk[k] + kk[k + 1])
-            if ok or n >= samples + 2:
-                return med, kk[-1] - kk[0], taps
+            if n >= samples:
+                kk = sorted(kept)
+                med = kk[n // 2] if n % 2 else 0.5 * (kk[n // 2 - 1] + kk[n // 2])
+                if samples == 1:
+                    ok = True                       # one tap per point: nothing to compare
+                else:
+                    # the tightest pair among the kept taps decides
+                    best = min(kk[k + 1] - kk[k] for k in range(n - 1))
+                    ok = best <= 0.015
+                    if ok and n > 2:
+                        k = min(range(n - 1), key=lambda k: kk[k + 1] - kk[k])
+                        med = 0.5 * (kk[k] + kk[k + 1])
+                if ok or n >= samples + 2:
+                    return med, kk[-1] - kk[0], taps
+            z = tap(kept[-1], 0.15); kept.append(z); taps.append(z)
 
     cmd_MESH_help = ("Bed mesh with the nozzle as the probe: OZNLAB_MESH [ADAPTIVE=1] [MARGIN=5] "
                      "[COUNT=5] [SAMPLES=2] [PROFILE=] [TEMP=] [KEEP_HOT=1]")
@@ -3742,7 +3758,7 @@ class OznLabSensor:
                 order = range(nx) if j % 2 == 0 else range(nx - 1, -1, -1)
                 for i in order:
                     if got:
-                        travel = max(travel_z, max(got.values()) + 1.0)
+                        travel = max(travel_z, max(got.values()) + 0.5)
                     else:
                         travel = first_z
                     th.manual_move([None, None, travel], 10.)
@@ -4151,7 +4167,7 @@ class OznLabHoming:
         z_start = z_now + 1.0
         # z_now is already past contact (the trigger stops 0.05-0.09 mm late at 3 mm/s), so the
         # fine taps only need the fit's depth below it
-        depth = oz._tap_depth(oz.tap_speed)
+        v_soft, depth = oz._soft_tap(oz.tap_speed, accel)
         z_target = max(self.z_min, z_now - depth)
         # fine taps. Measured on the reference printer: right after the MCU press the first fine
         # tap reads ~0.02 mm LOW and the following ones creep back up (0.064 -> 0.083 -> 0.089),
@@ -4166,7 +4182,7 @@ class OznLabHoming:
                 if zs:
                     z_start = zs[-1] + 0.4
                     z_target = max(self.z_min, zs[-1] - depth)
-                z_k, hz_um, amp, f_pre = oz._tap_once(th, z_start, z_target, oz.tap_speed, accel,
+                z_k, hz_um, amp, f_pre = oz._tap_once(th, z_start, z_target, v_soft, accel,
                                                       settle=0.3 if k == 0 else 0.15,
                                                       pre=0.3 if k == 0 else 0.25, post=0.25)
                 zs.append(z_k)
