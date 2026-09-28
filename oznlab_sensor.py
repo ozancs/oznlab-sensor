@@ -100,7 +100,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.9.16"
+VERSION = "0.9.17"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -1046,13 +1046,15 @@ class OznLabSensor:
         lost = 0.01 * v + v * v / (2. * max(accel, 1.))
         return v, max(0.04, 14. * v / sps + lost + 0.02)
 
-    def _trigger_ok(self, speed):
+    TRIGGER_SPEED = 3.0        # mm/s for trigger descents outside homing: the lag was measured at this speed
+
+    def _trigger_ok(self, speed=None):
         """the MCU trigger is built (z_homing: 1) and its threshold is safely above the noise at
         this speed and temperature; None when it is, else the reason"""
         if self.homing is None:
             return "z_homing is off"
         try:
-            self.homing._prep_trigger(self.homing.home_speed_cap(speed))
+            self.homing._prep_trigger(self.homing.home_speed_cap(speed or self.TRIGGER_SPEED))
         except Exception as e:
             return str(e)
         return None
@@ -1155,15 +1157,16 @@ class OznLabSensor:
         lc = self._last_contact
         if lc is not None and abs(lc[0] - pos[0]) < 5. and abs(lc[1] - pos[1]) < 5.:
             z_c = lc[2]; first_margin = 0.5
+        prev_sens = (self.last_sens, self.last_sens_t, self._tap_T)
         trig_why = None
         if z_c is None and gcmd.get_int('TRIGGER', 1):
             # no contact known here: find it on the MCU trigger (stops a few hundredths past the
             # contact) instead of a full descent that pushes 0.3 mm and more into the bed
-            trig_why = self._trigger_ok(speed)
+            trig_why = self._trigger_ok()
             if trig_why is None:
                 try:
                     toolhead.manual_move([None, None, z_start], lift_speed); toolhead.wait_moves()
-                    z_c = self.homing.trigger_z(toolhead, speed, z_target)[2]
+                    z_c = self.homing.trigger_z(toolhead, self.TRIGGER_SPEED, z_target)[2]
                     toolhead.manual_move([None, None, z_c + 0.4], lift_speed); toolhead.wait_moves()
                     self._detail(gcmd, "oznlab tap: trigger stop at z=%.4f (instead of a deep first tap)" % z_c)
                     if discard > 0: discard -= 1        # the priming descent is done
@@ -1198,8 +1201,8 @@ class OznLabSensor:
         finally:
             # never leave the sensor client subscribed or the nozzle pressed against the bed
             self._release_tap()
-            try:
-                toolhead.manual_move([None, None, z_start], lift_speed); toolhead.wait_moves()
+            try:                                    # park clear of the bed, not 0.4 mm above it
+                toolhead.manual_move([None, None, max(z_start, 3.)], lift_speed); toolhead.wait_moves()
             except Exception:
                 logging.exception("oznlab tap: could not lift after an error")
             self._sync_gcode_pos()
@@ -1214,6 +1217,8 @@ class OznLabSensor:
         spread = "%d taps within %.3f mm" % (len(results), results[-1] - results[0]) \
             if len(results) > 1 else "1 tap, not cross-checked"
         if len(results) >= 2 and sd > 0.025:
+            # ooze or dirt: those ramps say nothing about the real sensitivity either
+            self.last_sens, self.last_sens_t, self._tap_T = prev_sens
             gcmd.respond_info("OznLab tap: the taps disagree (%.3f mm) - z offset NOT changed. "
                               "Clean the nozzle and try again." % (results[-1] - results[0]))
             self._job_note('tap', "taps disagreed (%.3f mm), offset not changed" % (results[-1] - results[0]))
@@ -3490,7 +3495,7 @@ class OznLabSensor:
                 area = "not chosen yet"
             n = self.mesh_count[0] * self.mesh_count[1]
             trig = self.homing is not None
-            secs = n * (1.6 if trig else 5.6)
+            secs = n * (3.0 if trig else 5.6)
             items = [T("Area %s   |   %dx%d points   |   about %s" % (
                          area, self.mesh_count[0], self.mesh_count[1],
                          ("%.0f min" % (secs / 60.)) if secs >= 90. else ("%.0f s" % secs)))]
@@ -3504,7 +3509,7 @@ class OznLabSensor:
                           ('row', [B("%dx%d" % (k, k), 'grid_%d' % k, 'primary' if k == cur else 'secondary')
                                    for k in (3, 5, 7, 9)])]
             items += [T("3. START: taps every point right away. Home first, nozzle hot and clean, bed at "
-                        "printing temperature." + ("" if trig else " (z_homing: 1 would make it 3x faster)")),
+                        "printing temperature." + ("" if trig else " (z_homing: 1 would make it about twice as fast)")),
                       ('row', [B("Start bed mesh", 'mesh')])]
             if len(self._menu_profiles()) >= 2:
                 items += [T("COMPARE two saved meshes (your probe against the nozzle, or two days)."),
@@ -3978,7 +3983,20 @@ class OznLabSensor:
         except Exception:
             accel = 100.
         speed = self.tap_speed
-        use_trig = bool(gcmd.get_int('TRIGGER', 1)) and self._trigger_ok(speed) is None
+        use_trig = bool(gcmd.get_int('TRIGGER', 1))
+        if use_trig:
+            why = self._trigger_ok()
+            if why is not None:
+                use_trig = False
+                if self.homing is not None:
+                    gcmd.respond_info("OznLab tilt: the trigger cannot be used now (%s) - tapping instead" % why)
+        # an unlevelled bed can be a millimetre low at a corner: descend to position_min, not to
+        # the usual tap floor
+        try:
+            z_min = th.get_kinematics().rails[2].get_range()[0]
+        except Exception:
+            z_min = self.tap_target_z
+        floor = max(z_min + 0.05, -3.0)
         gcmd.respond_info("OznLab tilt: %d points from [%s], %s" % (
             len(points), name, "trigger descents" if use_trig else "taps"))
         zt.z_status.reset()
@@ -3994,10 +4012,16 @@ class OznLabSensor:
                 for x, y in points:
                     th.manual_move([None, None, lift], 10.)
                     th.manual_move([x, y, None], self.mesh_speed); th.wait_moves()
-                    if use_trig:
-                        z = self._trigger_point(th, None, speed, self.tap_target_z, live)[0]
-                    else:
-                        z = self._tap_point(th, 2, None, speed, accel)[0]
+                    try:
+                        if use_trig:
+                            z = self._trigger_point(th, None, self.TRIGGER_SPEED, floor, live)[0]
+                        else:
+                            z = self._tap_point(th, 2, None, speed, accel, full=(self.tap_start_z, floor))[0]
+                    except self.printer.command_error as e:
+                        raise gcmd.error("oznlab tilt: no contact at X%.0f Y%.0f down to z=%.2f (%s). The bed is "
+                                         "lower there than [stepper_z] position_min lets the nozzle go: level it "
+                                         "roughly by hand first, or set position_min: -2 for this run"
+                                         % (x, y, floor, e))
                     results.append(mp_mod.ProbeResult(x, y, z, x, y, z))
                     self._detail(gcmd, "oznlab tilt: X%.0f Y%.0f z=%.4f" % (x, y, z))
                 th.manual_move([None, None, lift], 10.); th.wait_moves()
@@ -4040,7 +4064,7 @@ class OznLabSensor:
                 z = 0.5 * (z + z2)
         return z, (max(zs) - min(zs)) if len(zs) > 1 else 0., zs
 
-    def _tap_point(self, toolhead, samples, pred, speed, accel):
+    def _tap_point(self, toolhead, samples, pred, speed, accel, full=None):
         """Contact z at the current XY for the mesh.
         Tap 1 is a squash tap and is never used: after the XY move it read up to 0.06 mm off in
         BOTH directions (ooze would only read high), so it doubles as the settle tap. It waits
@@ -4048,7 +4072,7 @@ class OznLabSensor:
         must agree within 0.015 mm; up to two more are added if they do not.
         Descents start just above the expected contact (neighbours) - most of the speed-up.
         Returns (z, spread of the kept taps, all taps incl. the squash tap)."""
-        full = (self.tap_start_z, self.tap_target_z)
+        full = full or (self.tap_start_z, self.tap_target_z)
         v_soft, depth = self._soft_tap(speed, accel)
         def one(start, target, settle, pre, v=speed):
             z = self._tap_once(toolhead, start, target, v, accel,
@@ -4204,12 +4228,12 @@ class OznLabSensor:
         # few hundredths of a mm. Its small lag is the same at every point, so the shape is right.
         use_trig = bool(gcmd.get_int('TRIGGER', 1))
         if use_trig:
-            why = self._trigger_ok(speed)
+            why = self._trigger_ok()
             if why is not None:
                 use_trig = False
                 if self.homing is not None:
                     gcmd.respond_info("OznLab mesh: the trigger cannot be used now (%s) - tapping the slow way" % why)
-        est = nx * ny * (1.6 if use_trig else 3.0 + 2.1 * samples)
+        est = nx * ny * (3.0 if use_trig else 3.0 + 2.1 * samples)   # measured: 5x5 trigger = 77 s
         gcmd.respond_info("OznLab mesh: %dx%d points, about %s" % (
             nx, ny, "%.0f s" % est if est < 90 else "%.0f min" % (est / 60.)))
         self._detail(gcmd, "oznlab mesh: X %.1f..%.1f  Y %.1f..%.1f, %s, %s"
@@ -4252,7 +4276,7 @@ class OznLabSensor:
                     pred = (max(nb) if nb else None)
                     try:
                         if use_trig:
-                            z, spread, taps = self._trigger_point(th, pred, speed, z_target, live)
+                            z, spread, taps = self._trigger_point(th, pred, self.TRIGGER_SPEED, z_target, live)
                         else:
                             z, spread, taps = self._tap_point(th, samples, pred, speed, accel)
                     except self.printer.command_error as e:
@@ -4280,7 +4304,7 @@ class OznLabSensor:
                 try: log.close()
                 except Exception: pass
             try:
-                th.manual_move([None, None, max(th.get_position()[2], travel_z)], 10.); th.wait_moves()
+                th.manual_move([None, None, max(th.get_position()[2], travel_z, 3.)], 10.); th.wait_moves()
             except Exception:
                 logging.exception("oznlab mesh: could not lift after an error")
             self._sync_gcode_pos()
@@ -4725,6 +4749,8 @@ class OznLabHoming:
         z0 = max(th.get_position()[2], 3.)
         th.manual_move([None, None, z0], 10.); th.wait_moves()
         trig, z_c = self._descend_and_tap(gcmd, speed, True, floor=-0.5)
+        th.manual_move([None, None, z_c + 3.], 10.); th.wait_moves()      # park well clear of the bed
+        oz._sync_gcode_pos()
         l = self.last
         over = abs(trig[2] - z_c)
         gcmd.respond_info("OznLab home test: %s - stopped %.2f mm past the bed, contact at z=%.3f"

@@ -1,8 +1,16 @@
 # Changelog
 
+## v0.9.17
+
+- After a tap, a home test or a mesh the nozzle parks 3 mm above the bed (it stayed 0.4 mm above)
+- A tap run that is rejected (taps disagree: ooze, dirt, a cold tip) no longer changes the sensitivity the trigger relies on, so the next trigger descent is not refused
+- `OZNLAB_Z_TILT` descends to `position_min` at every point, an unlevelled bed can be a millimetre low at a corner, and says so when it finds no bed
+- Trigger descents outside homing go at 3 mm/s, the speed the lag was measured at
+- Mesh time estimates from the measured run: 5x5 in 77 s, 9x9 about 4 min
+
 ## v0.9.16
 
-- Less push on the toolhead, with the MCU trigger the nozzle homing already uses (needs `z_homing: 1`). `OZNLAB_TAP`: the first descent stops on the trigger a few hundredths past the contact instead of pushing 0.3 mm and more into the bed; the soft taps follow. `OZNLAB_MESH`: one trigger descent per point, no fit, a second descent only when the point is far from what its neighbours predict; about 3x faster (9x9 in about 2 minutes) and the push is that of the trigger. Without the trigger the previous taps are used; `TRIGGER=0` forces them
+- Less push on the toolhead, with the MCU trigger the nozzle homing already uses (needs `z_homing: 1`). `OZNLAB_TAP`: the first descent stops on the trigger a few hundredths past the contact instead of pushing 0.3 mm and more into the bed; the soft taps follow. `OZNLAB_MESH`: one trigger descent per point, no fit, a second descent only when the point is far from what its neighbours predict; about twice as fast (5x5 in 77 s on our printer, was 3 min) and the push is that of the trigger: 0.05 mm at 2 mm/s. Without the trigger the previous taps are used; `TRIGGER=0` forces them
 - New `OZNLAB_Z_TILT`: bed / gantry level with nozzle taps at the points of your `[z_tilt]` or `[quad_gantry_level]` section, Klipper's own adjustment and retries. Menu: Bed level. Guide 6.8
 - `OZNLAB_MESH_COMPARE` reports the numbers without a verdict
 - Menu: every page is one status line, then for each action one line that says what happens and its button. Z offset page shows how far the last tap pushed the nozzle. Bed mesh page says how long the grid takes. Bed level page added

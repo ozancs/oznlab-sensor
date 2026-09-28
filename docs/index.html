@@ -789,7 +789,7 @@ tap_speed: 2.0</code></pre></div>
 <tr><td><code>mesh_travel_z</code></td><td>lift between points, mm</td></tr>
 <tr><td><code>tap_speed</code></td><td>descent speed, mm/s. Higher values are not tested yet</td></tr>
 </table></div>
-<p>With <code>z_homing: 1</code> (step 6.6, first part) every point is one short descent on the MCU trigger: the nozzle stops a few hundredths of a millimetre after it touches, the same amount at every point, so the shape is right and the push on the toolhead is small. A 9x9 grid takes about 2 minutes then. Without the trigger it is two fitted taps per point (a third when they disagree), about 1.5 minutes for 5x5 and 8 for 9x9. <code>OZNLAB_MESH TRIGGER=0</code> forces the taps.</p>
+<p>With <code>z_homing: 1</code> (step 6.6, first part) every point is one short descent on the MCU trigger: the nozzle stops a few hundredths of a millimetre after it touches, the same amount at every point, so the shape is right and the push on the toolhead is small. Measured on our printer: 5x5 in 77 s, so a 9x9 grid is about 4 minutes. Without the trigger it is two fitted taps per point (a third when they disagree), about twice as long. <code>OZNLAB_MESH TRIGGER=0</code> forces the taps.</p>
 <p><small>On our printer the nozzle mesh and a BTT Eddy mesh agreed within 0.03 mm after removing offset and tilt.</small></p>
 </section>
 
