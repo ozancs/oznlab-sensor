@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.9.14
+
+- `OZNLAB_CHECK` and setup step 2 only say the drive current "was measured at start" when it was; otherwise they say how to set it
+- README: the purge bucket goes into the config (`pa_x` / `pa_y`), not onto the PRINT_START line
+- Config template: three options were listed twice
+- Menu, bed mesh page: "Compare meshes" lists every saved mesh, you pick the first and then the second (before, it compared two fixed names)
+- `release.sh` is executable in the repo
+
 ## v0.9.13
 
 - A purge bucket for the PA test is set in the config: `pa_x`, `pa_y` in `[oznlab_sensor hotend]`. The PRINT_START line stays `OZNLAB_PRINT_START` with nothing after it

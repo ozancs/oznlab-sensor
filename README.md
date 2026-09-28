@@ -42,8 +42,8 @@ In PRINT_START, after heating and before the prime line:
 OZNLAB_PRINT_START
 ```
 
-(filament type from the gcode file; `PA_X= PA_Y=` for a purge bucket, `FILAMENT=` for a
-slicer that does not write the type into the file)
+(filament type from the gcode file; a purge bucket goes into the config as `pa_x` / `pa_y`,
+see guide 5.1)
 
 and `OZNLAB_MONITOR` after the prime line, `OZNLAB_PRINT_END` in PRINT_END and CANCEL_PRINT.
 

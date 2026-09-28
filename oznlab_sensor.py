@@ -84,7 +84,7 @@
 #   OZNLAB_PRINT_END                         stops the clog / runout and crash watch
 #   OZNLAB_TEST TYPE=flow|retract|temp       the three filament tests from one command
 #
-# PRINT_START:  ... heat ... OZNLAB_PRINT_START FILAMENT=... PA_X= PA_Y= ... prime line ... OZNLAB_MONITOR
+# PRINT_START:  ... heat ... OZNLAB_PRINT_START ... prime line ... OZNLAB_MONITOR
 # PRINT_END / CANCEL:  OZNLAB_PRINT_END   (the watches also stop by themselves when the print ends)
 #
 # Detector used by OZNLAB_WATCH:
@@ -99,7 +99,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.9.13"
+VERSION = "0.9.14"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -315,6 +315,7 @@ class OznLabSensor:
         # push on the bed, the descent gets slower to keep the sample count). SOFT= on OZNLAB_TAP.
         self.tap_soft = 0.1
         self._last_contact = None          # (x, y, z) of the last tap run: the next first tap is soft too
+        self._dc_auto = None               # drive current measured at this start, or None
         self.tap_samples = config.getint('tap_samples', 5, minval=1, maxval=10)
         # where OZNLAB_PRINT_START measures PA (purge bucket); empty = front left corner of the bed
         self.ps_pa_x = config.getfloat('pa_x', None); self.ps_pa_y = config.getfloat('pa_y', None)
@@ -527,7 +528,7 @@ class OznLabSensor:
             if not 0 < dc < 31:
                 logging.info("oznlab %s: drive current calibration gave %d, left as is", self.name, dc)
                 return
-            self.sensor.dccal.drive_cur = dc
+            self.sensor.dccal.drive_cur = dc; self._dc_auto = dc
             self.sensor.set_reg(ldc1612.REG_DRIVE_CURRENT0, dc << 11)
             self.printer.lookup_object('configfile').set(self.cfg_name, 'reg_drive_current', "%d" % dc)
             self.gcode.respond_info("OznLab %s: drive current %d measured and applied - the next SAVE_CONFIG "
@@ -2754,7 +2755,10 @@ class OznLabSensor:
             L.append("  [WARN] sample rate %.0f/s is below the configured %d - I2C is the bottleneck, try i2c_speed: 400000" % (st['rate'], exp))
         # 3 - config sanity
         if self._cfg_raw(self.cfg_name).get('reg_drive_current') is None and not st['errors']:   # the [FAIL] above already says it
-            L.append("  [WARN] reg_drive_current not saved yet - it was measured at start, SAVE_CONFIG keeps it")
+            L.append("  [WARN] reg_drive_current not saved yet - measured at start (%d), SAVE_CONFIG keeps it"
+                     % self._dc_auto if self._dc_auto is not None else
+                     "  [WARN] reg_drive_current not set - run LDC_CALIBRATE_DRIVE_CURRENT CHIP=%s, then SAVE_CONFIG"
+                     % self.name)
         if not self._section_in_main():
             L.append("  [WARN] [%s] is in an included file. Values this module saves (tap_z, pa_scale, "
                      "pa_method, mesh area) can then clash with it at SAVE_CONFIG - move the section into "
@@ -2868,7 +2872,8 @@ class OznLabSensor:
             else:
                 saved = self._cfg_raw(self.cfg_name).get('reg_drive_current') is not None
                 R("STEP 2/8  DRIVE CURRENT\n  [ OK ] no conversion errors, drive current %s.%s"
-                  % ("is fine" if saved else "was measured at start (SAVE_CONFIG keeps it)", nxt))
+                  % ("is fine" if saved else "was measured at start (SAVE_CONFIG keeps it)" if self._dc_auto is not None
+                     else "is the default, run LDC_CALIBRATE_DRIVE_CURRENT CHIP=%s + SAVE_CONFIG" % self.name, nxt))
         elif step == 3:
             secs = 25.
             R("STEP 3/8  DOES THE COIL FEEL THE HOTEND?\n"
@@ -3249,6 +3254,13 @@ class OznLabSensor:
             ('OZNLAB_STREAM DURATION=10 FILE=x.csv', "raw samples to a file"))),
     )
 
+    def _menu_profiles(self):
+        bm = self.printer.lookup_object('bed_mesh', None)
+        try:
+            return sorted(bm.pmgr.get_profiles().keys()) if bm is not None else []
+        except Exception:
+            return []
+
     def _prompt_items(self, title, items, footer):
         """popup with texts and button rows in the given order: items are ('text', str) or
         ('row', [(label, gcode, color)])"""
@@ -3273,6 +3285,16 @@ class OznLabSensor:
             self._prompt_close(); return
         run = gcmd.get('RUN', '').strip().lower()
         if run:
+            if run.startswith('cmp_'):                 # compare page: RUN=CMP_<a>_<b>, indexes into the profiles
+                names = self._menu_profiles(); parts = run.split('_')
+                try:
+                    a, b = names[int(parts[1]) - 1], names[int(parts[2]) - 1]
+                except (IndexError, ValueError):
+                    raise gcmd.error("oznlab menu: unknown mesh pair %s" % run)
+                self._prompt_close()
+                self.cmd_MESH_COMPARE(self.gcode.create_gcode_command(
+                    "OZNLAB_MESH_COMPARE", "OZNLAB_MESH_COMPARE", {'A': a, 'B': b}))
+                return
             if run.startswith('fil_'):                 # PA page: pick the filament, stay on the page
                 self.cmd_FILAMENT(self.gcode.create_gcode_command(
                     "OZNLAB_FILAMENT", "OZNLAB_FILAMENT", {'TYPE': run[4:], 'JOB': '0'}))
@@ -3364,10 +3386,23 @@ class OznLabSensor:
                         "temperature." % (("%.0f min" % (n * 3.5 / 60.)) if n * 3.5 >= 90. else
                                            ("%.0f s" % (n * 3.5)), n)),
                       ('row', [B("Start bed mesh", 'mesh')])]
-            if other:
-                items += [T("After both meshes: shows where your probe and the nozzle disagree."),
-                          ('row', [B("Compare the two meshes", 'meshcompare', 'secondary')])]
+            if len(self._menu_profiles()) >= 2:
+                items += [T("COMPARE: pick two saved meshes and see where they differ (for example your "
+                            "probe's mesh and the nozzle mesh, or the same mesh on two days)."),
+                          ('row', [P("Compare meshes", 'cmp')])]
             self._prompt_items("OznLab: Bed mesh", items, [back, save, close]); return
+        if page == 'cmp' or (page.startswith('cmp') and page[3:].isdigit()):
+            names = self._menu_profiles()
+            first = int(page[3:]) if page[3:].isdigit() else None
+            if first is None or not 1 <= first <= len(names):
+                items = [T("Saved meshes: %d. Pick the FIRST one:" % len(names))]
+                items += [('row', [P(n, 'cmp%d' % (k + 1))]) for k, n in enumerate(names)]
+            else:
+                items = [T("First: %s. Now pick the SECOND one:" % names[first - 1])]
+                items += [('row', [B(n, 'cmp_%d_%d' % (first, k + 1), 'secondary')])
+                          for k, n in enumerate(names) if k + 1 != first]
+            self._prompt_items("OznLab: Compare meshes", items,
+                               [("Back", "%s PAGE=MESH" % c, 'secondary'), close]); return
         if page == 'homing':
             if self.homing is None:
                 items = [T("OFF. The nozzle can home Z instead of an endstop, or next to your probe."),
