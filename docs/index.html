@@ -789,7 +789,7 @@ tap_speed: 2.0</code></pre></div>
 <tr><td><code>mesh_travel_z</code></td><td>lift between points, mm</td></tr>
 <tr><td><code>tap_speed</code></td><td>descent speed, mm/s. Higher values are not tested yet</td></tr>
 </table></div>
-<p>A 5x5 grid takes about 1.5 minutes with the defaults (two taps per point, a third when they disagree). On a small bed, a smaller grid and <code>mesh_samples: 1</code> make it much quicker.</p>
+<p>With <code>z_homing: 1</code> (step 6.6, first part) every point is one short descent on the MCU trigger: the nozzle stops a few hundredths of a millimetre after it touches, the same amount at every point, so the shape is right and the push on the toolhead is small. A 9x9 grid takes about 2 minutes then. Without the trigger it is two fitted taps per point (a third when they disagree), about 1.5 minutes for 5x5 and 8 for 9x9. <code>OZNLAB_MESH TRIGGER=0</code> forces the taps.</p>
 <p><small>On our printer the nozzle mesh and a BTT Eddy mesh agreed within 0.03 mm after removing offset and tilt.</small></p>
 </section>
 
@@ -878,6 +878,26 @@ SAVE_CONFIG</code></pre></div>
 <div class="cb"><pre><code>OZNLAB_THERMAL_CAL
 SAVE_CONFIG</code></pre></div>
 </section>
+
+<section class="sub" data-title="Bed level" hidden>
+<div class="gain"><span class="gain-k">You get</span> a levelled bed or gantry from nozzle taps, no probe needed.</div>
+<h3>6.8 Bed level (Z tilt) with the nozzle</h3>
+<p>Printers with two or more Z motors level the bed with <code>Z_TILT_ADJUST</code> or <code>QUAD_GANTRY_LEVEL</code>, which need a probe. <code>OZNLAB_Z_TILT</code> does the same with nozzle taps at the points of your <code>[z_tilt]</code> or <code>[quad_gantry_level]</code> section, and Klipper's own maths moves the motors. The section is needed even without a probe, because it says where the motors are. An example for three motors:</p>
+<div class="cb"><pre><code>[z_tilt]
+z_positions:
+    -50, 18       # where each Z motor is (behind the bed edge is fine)
+    150, 348
+    350, 18
+points:
+    30, 30        # where the nozzle taps, over the bed
+    150, 270
+    270, 30
+speed: 150
+horizontal_move_z: 5
+retries: 5
+retry_tolerance: 0.01</code></pre></div>
+<p>Home, heat the nozzle, then <code>OZNLAB_Z_TILT</code> (or the menu: Bed level). It taps every point, adjusts, and repeats until the points agree within <code>retry_tolerance</code>. Home Z again afterwards, the motors moved. With <code>z_homing: 1</code> the taps are trigger descents (fast, small push); otherwise two fitted taps per point.</p>
+</section>
 </section>
 
 <!-- ============================== 7 ============================== -->
@@ -903,6 +923,7 @@ SAVE_CONFIG</code></pre></div>
 <tr><td><code>OZNLAB_MESH_SETUP</code></td><td>Mesh area wizard (popup).</td></tr>
 <tr><td><code>OZNLAB_MESH [ADAPTIVE=1]</code></td><td>Bed mesh with the nozzle.</td></tr>
 <tr><td><code>OZNLAB_MESH_COMPARE</code></td><td>Shape difference between two mesh profiles.</td></tr>
+<tr><td><code>OZNLAB_Z_TILT</code></td><td>Bed level with nozzle taps at your <code>[z_tilt]</code> / <code>[quad_gantry_level]</code> points (step 6.8).</td></tr>
 <tr><td><code>OZNLAB_HOME_TEST</code></td><td>Dry run of nozzle Z homing.</td></tr>
 <tr><td><code>OZNLAB_CRASH</code></td><td>Crash watch. <code>OFF=1</code>, <code>STATUS=1</code>, <code>TEST=1</code>.</td></tr>
 <tr><td><code>OZNLAB_TEST TYPE=flow|retract|temp</code></td><td>The three filament tests from one command (same as the three below).</td></tr>

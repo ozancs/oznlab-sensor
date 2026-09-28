@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.9.16
+
+- Less push on the toolhead, with the MCU trigger the nozzle homing already uses (needs `z_homing: 1`). `OZNLAB_TAP`: the first descent stops on the trigger a few hundredths past the contact instead of pushing 0.3 mm and more into the bed; the soft taps follow. `OZNLAB_MESH`: one trigger descent per point, no fit, a second descent only when the point is far from what its neighbours predict; about 3x faster (9x9 in about 2 minutes) and the push is that of the trigger. Without the trigger the previous taps are used; `TRIGGER=0` forces them
+- New `OZNLAB_Z_TILT`: bed / gantry level with nozzle taps at the points of your `[z_tilt]` or `[quad_gantry_level]` section, Klipper's own adjustment and retries. Menu: Bed level. Guide 6.8
+- `OZNLAB_MESH_COMPARE` reports the numbers without a verdict
+- Menu: every page is one status line, then for each action one line that says what happens and its button. Z offset page shows how far the last tap pushed the nozzle. Bed mesh page says how long the grid takes. Bed level page added
+
 ## v0.9.15
 
 - Heaters go off by themselves after a tap or a test outside a print: 2 minutes after the last OznLab step, when no print is running and nothing else is moving the printer. Another OznLab step in the meantime, or a print starting, keeps them on. Before, a quick tap test could leave the nozzle hot for hours
