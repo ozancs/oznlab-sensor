@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.9.11
+
+- Softer taps: only the first descent of a tap goes the full 0.3 mm past the bed to find the contact. The others go just past it (about 0.1 mm at 2 mm/s and 200 samples/s: the 12 samples the fit needs, `DEPTH=` on `OZNLAB_TAP` overrides). Same for the fine taps after nozzle homing and for the mesh. The contact fit uses only that first stretch, so the numbers do not change, the push on the toolhead and the bed does. Suggested by Raidy
+- Guide 5.1: a whole PRINT_START as an example, with the purge bucket lines
+
 ## v0.9.10
 
 Setup with fewer things to type, after watching a second printer go through it.

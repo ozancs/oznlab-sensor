@@ -554,7 +554,7 @@ SAVE_CONFIG</code></pre></div>
 <p class="lbl ok">You should see</p>
 <pre class="out">STEP 4/8  TAP TEST AND Z OFFSET
 OznLab tap: z offset ... set (5 taps within ... mm) - SAVE_CONFIG to keep it</pre>
-<p>The <code>within</code> number is how far apart the taps were. The smaller the better; on our printer it is around 0.01 mm.</p>
+<p>The <code>within</code> number is how far apart the taps were. The smaller the better; on our printer it is around 0.01 mm. The first tap goes 0.3 mm past the bed to find the contact, the others only about 0.1 mm past it, so the toolhead is not pushed more than the measurement needs.</p>
 <p class="lbl bad">If not</p>
 <div class="tw"><table class="fix">
 <tr><td><code>the taps disagree ... z offset NOT changed</code></td><td>Nothing was set, so skip <code>SAVE_CONFIG</code>. Clean the nozzle tip, wait a minute after heating, check that the coil cannot move, and run again.</td></tr>
@@ -623,6 +623,22 @@ OznLab: pa_scale_asa ... (= ... / tau ..., pa_method ...), for ASA - SAVE_CONFIG
 
     OZNLAB_PRINT_START</code></pre></div>
 <p>That one line reads the filament type from the gcode file (OrcaSlicer, PrusaSlicer, SuperSlicer and Bambu Studio write it), measures pressure advance in the air over the front left corner of the bed, waits 15 s for the hotend to settle and taps the bed centre for the Z offset. Purge bucket? <code>PA_X=</code> <code>PA_Y=</code> put the PA measurement there. <code>TAP_X</code> / <code>TAP_Y</code> pick another tap spot, <code>SETTLE=</code> another wait.</p>
+<p class="lbl use">A whole PRINT_START, as an example</p>
+<p>Your own macro has other names and steps; the OznLab lines are the three marked ones. This printer has a purge bucket at X250 Y5 and homes with the eddy probe.</p>
+<div class="cb"><pre><code>[gcode_macro PRINT_START]
+gcode:
+    {% set bed = params.BED|default(60)|float %}
+    {% set extruder = params.EXTRUDER|default(215)|float %}
+    G28
+    M190 S{bed}
+    BED_MESH_CALIBRATE                       ; or BED_MESH_PROFILE LOAD=default
+    M109 S{extruder}
+    OZNLAB_PRINT_START PA_X=250 PA_Y=5       ; OznLab 1: filament, PA over the bucket, tap
+    G1 X5 Y5 Z0.3 F6000                      ; your prime line
+    G1 X100 E15 F1200
+    OZNLAB_MONITOR                           ; OznLab 2: clog / runout watch
+    #OZNLAB_CRASH                            ; OznLab 3: crash watch, when you want it</code></pre></div>
+<p><small>No bucket: leave <code>PA_X</code> and <code>PA_Y</code> away, the PA filament drops on the front left corner of the bed and the prime line runs over it. Slicer PRINT_START line: <code>PRINT_START BED=[bed_temperature_initial_layer_single] EXTRUDER=[nozzle_temperature_initial_layer]</code> (Orca), no FILAMENT needed.</small></p>
 <p><small>Cura, or the filament type is not in your files? In the slicer's start G-code add <code>FILAMENT={filament_type[initial_extruder]}</code> (Orca syntax) to the PRINT_START line and pass it on: <code>OZNLAB_PRINT_START FILAMENT="{params.FILAMENT|default('')}"</code>.</small></p>
 <p>If a filament has no scale of its own yet, the console says so at the start of the print and the default <code>pa_scale</code> is used.</p>
 <p>Then your prime line, and as the <b>last lines</b> of PRINT_START:</p>

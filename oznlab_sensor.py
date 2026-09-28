@@ -98,7 +98,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.9.10"
+VERSION = "0.9.11"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -949,6 +949,16 @@ class OznLabSensor:
             logging.exception("oznlab tap: could not read the bed mesh")
             return 0.
 
+    def _tap_depth(self, speed):
+        """how far past a known contact a tap needs to go: the ramp fit wants about 12 samples
+        after the contact, at least 0.08 mm. Every tap after the first goes only this deep, so the
+        toolhead and the bed are pushed a fraction of the first tap's 0.3 mm."""
+        try:
+            sps = float(self.sensor.get_samples_per_second()) or float(self.sensor.data_rate)
+        except Exception:
+            sps = float(self.sensor.data_rate)
+        return max(0.08, 12. * speed / max(sps, 1.))
+
     def _tap_once(self, toolhead, z_start, z_target, speed, accel, lift_speed=10.,
                   settle=0.3, pre=0.4, post=0.35):
         """One bounded descent. Returns (contact_z, Hz/um, ramp amplitude, pre-contact baseline Hz).
@@ -1009,7 +1019,8 @@ class OznLabSensor:
         return z_c, hz_per_um, amp, f_pre
 
     cmd_TAP_help = ("Nozzle-on-bed tap using the OznLab Sensor: OZNLAB_TAP [SAMPLES=5] [DISCARD=1] "
-                    "[SPEED=2] [START=2] [TARGET=-0.3] [ADJUST=] [APPLY=1] [SAVE=1]")
+                    "[SPEED=2] [START=2] [TARGET=-0.3] [DEPTH=] [ADJUST=] [APPLY=1] [SAVE=1]  "
+                    "(the first tap goes to TARGET, the others DEPTH past the contact it found)")
     def cmd_TAP(self, gcmd):
         toolhead = self.printer.lookup_object('toolhead')
         if 'z' not in toolhead.get_status(self.reactor.monotonic())['homed_axes']:
@@ -1035,17 +1046,23 @@ class OznLabSensor:
             raise gcmd.error("oznlab tap: TARGET=%.2f is below [stepper_z] position_min=%.2f - "
                              "set position_min to about -1 or raise TARGET" % (z_target, z_min))
         lift_speed = 10.
+        depth = self._gf(gcmd, 'DEPTH', self._tap_depth(speed), minval=0.05, maxval=0.6)
         results = []; sens = []
         try:
+            z_c = None
             for i in range(samples + discard):
-                z_c, hz_per_um, amp, f_pre = self._tap_once(toolhead, z_start, z_target,
-                                                            speed, accel, lift_speed)
+                if z_c is None:
+                    s0, t0 = z_start, z_target                # the first descent finds the contact
+                else:                                         # the others go just past it
+                    s0 = min(z_start, z_c + 0.4)
+                    t0 = max(z_target, z_c - depth)
+                z_c, hz_per_um, amp, f_pre = self._tap_once(toolhead, s0, t0, speed, accel, lift_speed)
                 if i < discard:
                     self._detail(gcmd, "oznlab tap: priming tap (not used) z=%.4f" % z_c)
                     continue
                 results.append(z_c); sens.append(hz_per_um)
                 self._detail(gcmd, "oznlab tap %d/%d: z=%.4f  ramp %.0f Hz over %.2f mm, %.1f Hz/um"
-                             % (i + 1 - discard, samples, z_c, amp, z_c - z_target, hz_per_um))
+                             % (i + 1 - discard, samples, z_c, amp, z_c - t0, hz_per_um))
         except self.gcode.error as e:
             self._job_note('tap', "failed: %s" % (e,))
             raise
@@ -3571,7 +3588,7 @@ class OznLabSensor:
             if ref is None:
                 return full_tap(settle, pre)
             start = min(self.tap_start_z, ref + margin)
-            target = max(self.tap_target_z, ref - 0.3)
+            target = max(self.tap_target_z, ref - self._tap_depth(speed))
             try:
                 return one(start, target, settle, pre)
             except self.printer.command_error as e:
@@ -4132,9 +4149,10 @@ class OznLabHoming:
         except Exception:
             accel = 100.
         z_start = z_now + 1.0
-        # z_now is already past contact (the trigger stops 0.05-0.09 mm late at 3 mm/s), so
-        # 0.25 below it is about as deep as an ordinary tap (tap_target_z -0.3 below contact)
-        z_target = max(self.z_min, z_now - 0.25)
+        # z_now is already past contact (the trigger stops 0.05-0.09 mm late at 3 mm/s), so the
+        # fine taps only need the fit's depth below it
+        depth = oz._tap_depth(oz.tap_speed)
+        z_target = max(self.z_min, z_now - depth)
         # fine taps. Measured on the reference printer: right after the MCU press the first fine
         # tap reads ~0.02 mm LOW and the following ones creep back up (0.064 -> 0.083 -> 0.089),
         # the hotend mount relaxing after being pushed. So: wait, one relax tap that is not used,
@@ -4147,7 +4165,7 @@ class OznLabHoming:
             for k in range(5):
                 if zs:
                     z_start = zs[-1] + 0.4
-                    z_target = max(self.z_min, zs[-1] - 0.3)
+                    z_target = max(self.z_min, zs[-1] - depth)
                 z_k, hz_um, amp, f_pre = oz._tap_once(th, z_start, z_target, oz.tap_speed, accel,
                                                       settle=0.3 if k == 0 else 0.15,
                                                       pre=0.3 if k == 0 else 0.25, post=0.25)
