@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.9.21
+
+- The trigger works with a cold nozzle too. Its filter now looks at the change over 1, 2 or 4 samples instead of always 1: a longer span gives the small contact slope of a cold nozzle about three times more room above the noise, for a trigger that fires one or two samples later. The shortest span with a safe margin is taken, so with a hot nozzle nothing changes
+- When even that is not enough the descent goes at 5 mm/s instead of 3 (the slope per sample grows with the speed). Only then, the push is a little larger
+- A mesh or a Z tilt keeps the same speed and filter for all its points, so every point has the same small lag
+
 ## v0.9.20
 
 - `data_rate` default 100 (was 200), in the module, the config template and the installer. Everything is tested at 100, and the sensor resolution is finer there

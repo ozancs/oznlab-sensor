@@ -100,7 +100,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.9.20"
+VERSION = "0.9.21"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -1065,7 +1065,7 @@ class OznLabSensor:
         if self.homing is None:
             return "z_homing is off"
         try:
-            self.homing._prep_trigger(self.homing.home_speed_cap(speed or self.TRIGGER_SPEED))
+            self.homing.plan_speed(speed or self.TRIGGER_SPEED)
         except Exception as e:
             return str(e)
         return None
@@ -4531,12 +4531,28 @@ class OznLabSensor:
 # what Klipper's homing gets as the probe result, so Z=0 is the bed at tap precision.
 class _SosDesign:
     """the minimal 'filter design' trigger_analog.MCU_SosFilter needs, without scipy:
-    one first-order low-pass section, one derivative section"""
-    def __init__(self, sps, cutoff_hz):
+    one first-order low-pass section, then a difference over k samples (1, 2 or 4).
+    A ramp of s per sample comes out as k*s, the white noise only grows by about 1.3 at k=4:
+    a cold nozzle (small slope) gets about three times the signal to noise of k=1, for a
+    trigger that fires one or two samples later."""
+    K_MAX_SECTIONS = 3
+    def __init__(self, sps, cutoff_hz, k=1):
         a = 1. - math.exp(-2. * math.pi * cutoff_hz / float(sps))
-        self.a = a
-        self.sections = [[a, 0., 0., 1., -(1. - a), 0.],     # y = a x + (1-a) y[n-1]
-                         [1., -1., 0., 1., 0., 0.]]           # y = x - x[n-1]
+        self.a = a; self.k = k
+        lp = [a, 0., 0., 1., -(1. - a), 0.]                   # y = a x + (1-a) y[n-1]
+        if k == 1:
+            self.sections = [lp, [1., -1., 0., 1., 0., 0.]]   # y = x - x[n-1]
+        elif k == 2:
+            self.sections = [lp, [1., 0., -1., 1., 0., 0.]]   # y = x - x[n-2]
+        elif k == 4:
+            self.sections = [lp, [1., 0., -1., 1., 0., 0.],   # (1 - z^-2)(1 + z^-2) = 1 - z^-4
+                             [1., 0., 1., 1., 0., 0.]]
+        else:
+            raise ValueError("k must be 1, 2 or 4")
+    def noise_per_sample(self, sigma):
+        """rms of the output for white input noise sigma, divided by k (same units as a slope)"""
+        a = self.a; rho = (1. - a) ** self.k
+        return sigma * math.sqrt(a / (2. - a)) * math.sqrt(2. * (1. - rho)) / self.k
     def get_filter_sections(self):
         return self.sections
     def get_initial_state(self):
@@ -4575,7 +4591,7 @@ class OznLabHoming:
         self.printer.register_event_handler('klippy:mcu_identify', self._check_firmware)
         self.ta = trigger_analog.MCU_trigger_analog(oz.sensor)
         cmdq = self.ta.get_dispatch().get_command_queue()
-        self.sos = trigger_analog.MCU_SosFilter(oz.sensor.get_mcu(), cmdq, 2)
+        self.sos = trigger_analog.MCU_SosFilter(oz.sensor.get_mcu(), cmdq, _SosDesign.K_MAX_SECTIONS)
         self.ta.setup_sos_filter(self.sos)
         probe.LookupZSteppers(config, self.ta.get_dispatch().add_stepper)
         self.z_min = probe.lookup_minimum_z(config)
@@ -4646,16 +4662,17 @@ class OznLabHoming:
         return r
 
     def _rest_noise(self, rec, design):
-        """rms of the MCU filter output (low-pass, then difference) over frequencies recorded
-        with the nozzle at rest, Hz per sample; None when there are too few samples"""
-        if len(rec) < 12:
+        """rms of the MCU filter output (low-pass, then difference over k) over frequencies
+        recorded with the nozzle at rest, divided by k (Hz per sample, like a slope); None when
+        there are too few samples"""
+        k = design.k
+        if len(rec) < 12 + k:
             return None
-        y = None; prev = None; ds = []
+        ys = []; y = None
         for f in rec:
             y = f if y is None else y + design.a * (f - y)
-            if prev is not None:
-                ds.append(y - prev)
-            prev = y
+            ys.append(y)
+        ds = [(ys[i] - ys[i - k]) / k for i in range(k, len(ys))]
         ds = ds[4:]                                     # the low-pass settling
         if len(ds) < 8:
             return None
@@ -4680,11 +4697,13 @@ class OznLabHoming:
         on['on'] = False
         return rec
 
-    def _prep_trigger(self, speed, rest=None, boost=1.):
+    def _prep_trigger(self, speed, rest=None, boost=1., k=None):
         """set the MCU filter and threshold for this descent speed; raises when the expected
         contact slope is too close to the noise floor (the trigger could miss and the nozzle
         would plough on to position_min). rest: frequencies recorded at rest just before, the
-        floor then follows the noise of this moment. boost: raise the threshold (retries)"""
+        floor then follows the noise of this moment. boost: raise the threshold (retries).
+        k: the filter's difference length, None = the shortest one with a safe margin (hot: 1,
+        the tested behaviour; cold or noisy: 2 or 4). Thresholds and slopes are per sample."""
         oz = self.oz; sensor = oz.sensor
         sps = float(sensor.get_samples_per_second())
         # The sensitivity rises with the hotend temperature (about 2 Hz/um cold, 10+ hot). A value
@@ -4698,16 +4717,24 @@ class OznLabHoming:
         elif oz._tap_T is None or t_now is None or t_now < oz._tap_T - 10.:
             sens = min(sens, oz.home_assume_sens)
         slope = sens * speed * 1000. / sps                   # Hz per sample once in contact
-        design = _SosDesign(sps, oz.home_lowpass)
         noise = (oz.last_stats or {}).get('noise') or 4.     # Hz rms per raw sample
-        # first-order LP then a difference: sigma_d = a * sigma * sqrt(2 / (2 - a))
-        noise_d = noise * design.a * math.sqrt(2. / (2. - design.a))
-        measured = self._rest_noise(rest, design) if rest else None
-        if measured is not None:
-            noise_d = max(noise_d, measured)
-        floor = oz.home_noise_sigma * noise_d
-        thr = max(oz.home_trigger_frac * slope, floor) * boost
-        self.last_prep = dict(slope=slope, thr=thr, sens=sens, noise_d=noise_d, measured=measured, speed=speed)
+        cands = []
+        for kk in ((k,) if k else (1, 2, 4)):
+            design = _SosDesign(sps, oz.home_lowpass, kk)
+            noise_d = design.noise_per_sample(noise)
+            measured = self._rest_noise(rest, design) if rest else None
+            if measured is not None:
+                noise_d = max(noise_d, measured)
+            floor = oz.home_noise_sigma * noise_d
+            thr = max(oz.home_trigger_frac * slope, floor) * boost
+            cands.append((design, noise_d, measured, floor, thr))
+            if thr <= 0.6 * slope:                           # safe margin: the shortest such k
+                break
+        # none with the margin: the one with the lowest threshold, if it passes at all
+        design, noise_d, measured, floor, thr = cands[-1] if cands[-1][4] <= 0.6 * slope \
+            else min(cands, key=lambda c: c[4])
+        self.last_prep = dict(slope=slope, thr=thr, sens=sens, noise_d=noise_d, measured=measured,
+                              speed=speed, k=design.k)
         if thr > 0.75 * slope:
             raise self.printer.command_error(
                 "oznlab homing: expected contact slope %.1f Hz/sample (%.1f Hz/um x %.1f mm/s at %.0f sps) "
@@ -4718,8 +4745,31 @@ class OznLabHoming:
         self.sos.set_filter_design(design)
         self.sos.set_offset_scale(0, 1000. * sensor.convert_raw_to_frequency(1), auto_offset=True)
         self.ta.set_raw_range(0, MAX_VALID_RAW_VALUE)
-        self.ta.set_trigger('abs_ge', int(thr * 1000. + 0.5))     # filter runs in milli-Hz
+        # the filter output is k x the per-sample slope, in milli-Hz
+        self.ta.set_trigger('abs_ge', int(thr * design.k * 1000. + 0.5))
         return slope, thr, sens
+
+    COLD_SPEED = 5.0           # mm/s: descent speed when the slope at the asked speed is too small
+
+    def plan_speed(self, speed, lock=None, rest=None):
+        """the descent speed for a trigger descent: the asked one, or COLD_SPEED when the contact
+        slope at the asked speed is too small (cold nozzle: the slope per sample grows with the
+        speed, the push a little too). lock: a dict kept for a whole mesh or tilt, so every
+        point uses the same speed and filter (the same lag). Raises when neither works."""
+        if lock is not None and lock.get('speed'):
+            return lock['speed']
+        speed = self.home_speed_cap(speed)
+        try:
+            self._prep_trigger(speed, rest)
+        except self.printer.command_error:
+            fast = self.home_speed_cap(max(speed, self.COLD_SPEED))
+            if fast <= speed + 0.01:
+                raise
+            self._prep_trigger(fast, rest)
+            speed = fast
+        if lock is not None:
+            lock['speed'] = speed
+        return speed
 
     def trigger_z(self, th, speed, floor=None, check_movement=False, live=None):
         """Descend on the MCU trigger from where the nozzle is and stop at the contact. Returns the
@@ -4730,8 +4780,8 @@ class OznLabHoming:
         descents; None subscribes one for this descent."""
         oz = self.oz
         oz._end_crash_test("trigger descent")
-        speed = self.home_speed_cap(speed)
-        self._prep_trigger(speed)
+        lock = live                                # a caller's shared client dict also keeps speed and k
+        speed = self.plan_speed(speed, lock)       # refuses before any move when it is hopeless
         # the move before this one (the homing retract, a z hop, the travel to a mesh point) must
         # be over and the hotend still: right after a fast stop the hotend mount is still ringing
         # and the slope filter took that for a contact ("Probe triggered prior to movement")
@@ -4750,7 +4800,12 @@ class OznLabHoming:
                 # the settle window doubles as a noise measurement: the threshold floor follows
                 # the noise of this moment (steppers on, bed hot), and goes up on every retry
                 rest = self._record_rest(0.3 if attempt == 0 else 0.5)
-                self._prep_trigger(speed, rest, boost=1.5 ** attempt)
+                if attempt == 0:                   # with the noise of this moment, maybe faster
+                    speed = self.plan_speed(speed, lock, rest)
+                self._prep_trigger(speed, rest, boost=1.5 ** attempt,
+                                   k=lock.get('k') if lock is not None else None)
+                if lock is not None:
+                    lock.setdefault('k', self.last_prep['k'])
                 z0 = th.get_position()[2]
                 trig = phoming.probing_move(self.ta, pos, speed, check_movement=False)
                 if z0 - trig[2] >= 0.05:
@@ -4777,8 +4832,7 @@ class OznLabHoming:
     def _descend_and_tap(self, gcmd, speed, check_movement, floor=None):
         oz = self.oz
         th = self.printer.lookup_object('toolhead')
-        speed = self.home_speed_cap(speed)
-        self._prep_trigger(speed)                  # refuses early when the slope is hopeless
+        speed = self.plan_speed(speed)             # refuses early when the slope is hopeless
         for attempt in range(3):
             trig = self.trigger_z(th, speed, floor, check_movement)
             lp = self.last_prep; slope, thr, sens = lp['slope'], lp['thr'], lp['sens']
@@ -4794,7 +4848,8 @@ class OznLabHoming:
         z_c = self._fine_result(zs)
         self.last_fine = zs
         self.last = dict(trigger=trig[2], contact=z_c, sens=hz_um, sens_assumed=sens,
-                         slope=slope, thr=thr, speed=speed)
+                         slope=slope, thr=thr, speed=self.last_prep.get('speed', speed),
+                         k=self.last_prep.get('k', 1))
         return trig, z_c
 
     def _fine_taps(self, th, trig):
@@ -4880,9 +4935,9 @@ class OznLabHoming:
         gcmd.respond_info("OznLab home test: %s - stopped %.2f mm past the bed, contact at z=%.3f"
                           % ("OK" if over < 0.3 else "stopped late", over, z_c))
         oz._detail(gcmd, "oznlab home test: %.1f mm/s from z=%.2f; MCU trigger z=%.4f (threshold %.1f "
-                     "Hz/sample, expected slope %.1f, sensitivity assumed %.1f Hz/um); fine taps %s "
+                     "Hz/sample, expected slope %.1f, filter k=%d, sensitivity assumed %.1f Hz/um); fine taps %s "
                      "(first not used) -> %.4f, %.1f Hz/um measured"
-                     % (speed, z0, trig[2], l['thr'], l['slope'], l['sens_assumed'],
+                     % (l['speed'], z0, trig[2], l['thr'], l['slope'], l['k'], l['sens_assumed'],
                         " ".join("%.4f" % v for v in getattr(self, 'last_fine', [])), z_c, l['sens']))
 
 
