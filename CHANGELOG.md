@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.9.18
+
+- Nozzle homing on a printer that homes and retracts fast: the trigger could fire in the first samples of the descent, while the hotend was still shaking from the move before ("Probe triggered prior to movement", or a Z 0 in the air followed by "contact amplitude too small"). Every trigger descent now waits for the previous move to finish and settles first; a trigger that fires before the nozzle has moved is retried after a pause; a trigger point where the fine taps find no bed is left behind and the descent continues on the trigger
+- When a print ends (`OZNLAB_PRINT_END`) and the Z offset was babystepped during it, a popup offers to keep the babystep for the next taps, with or without `SAVE_CONFIG`
+- Setup step 3 (finger push test) refuses to start with the nozzle above 50 C and says so in the guide, the menu and the console
+
 ## v0.9.17
 
 - After a tap, a home test or a mesh the nozzle parks 3 mm above the bed (it stayed 0.4 mm above)

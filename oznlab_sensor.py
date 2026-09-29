@@ -100,7 +100,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.9.17"
+VERSION = "0.9.18"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -2979,7 +2979,11 @@ class OznLabSensor:
                      else "is the default, run LDC_CALIBRATE_DRIVE_CURRENT CHIP=%s + SAVE_CONFIG" % self.name, nxt))
         elif step == 3:
             secs = 25.
-            R("STEP 3/8  DOES THE COIL FEEL THE HOTEND?\n"
+            t_noz = self._noz_temp()
+            if t_noz is not None and t_noz > 50.:
+                raise gcmd.error("STEP 3/8: the nozzle is %.0f C - do NOT touch it. Let it cool below 50 C "
+                                 "(M104 S0), then run OZNLAB_SETUP STEP=3 again" % t_noz)
+            R("STEP 3/8  DOES THE COIL FEEL THE HOTEND?  (COLD NOZZLE ONLY - never touch a hot nozzle)\n"
               "  Watching for %.0f s. Push the nozzle UP with a finger (or press it on the bed) 3 times.\n"
               "  Each push should print a TAP line below. No lines = the coil is too far from the\n"
               "  heatsink, or it is looking at plastic instead of aluminium.%s" % (secs, nxt))
@@ -3323,6 +3327,7 @@ class OznLabSensor:
         'tap': "OZNLAB_TAP SAVE=0",
         'tapsave': "OZNLAB_TAP",
         'tapadj': "OZNLAB_TAP_ADJUST",
+        'tapadjsave': "OZNLAB_TAP_ADJUST\nSAVE_CONFIG",
         'pa': "OZNLAB_CALIBRATE_PA",
         'pameasure': "OZNLAB_CALIBRATE_PA APPLY=0",
         'meshsetup': "OZNLAB_MESH_SETUP",
@@ -3552,7 +3557,8 @@ class OznLabSensor:
         if page == 'tests':
             items = [T("SETUP: the guided steps, one per press. HEALTH: wiring, sensor and config check."),
                      ('row', [B("Guided setup", 'setup'), B("Health check", 'check', 'secondary')]),
-                     T("PUSH: push the nozzle up with a finger for 25 s, every push prints a line. "
+                     T("PUSH (cold nozzle only, never touch it hot): push the nozzle up with a finger for "
+                       "25 s, every push prints a line. "
                        "CRASH: knock the toolhead for 60 s, see if it is noticed."
                        + (" HOME: nozzle homing dry run." if self.homing is not None else "")),
                      ('row', [B("Push test", 'push', 'secondary'), B("Crash test", 'crashtest', 'secondary')]
@@ -3604,7 +3610,7 @@ class OznLabSensor:
                      ('row', [B("Push test (25 s)", 'push', 'secondary'),
                               B("Crash test (60 s)", 'crashtest', 'secondary')]
                       + ([B("Home test", 'hometest', 'secondary')] if self.homing is not None else [])),
-                     T("Push test: push the nozzle up with a finger, every push prints a TAP line. "
+                     T("Push test (cold nozzle only): push the nozzle up with a finger, every push prints a TAP line. "
                        "Crash test: knock the toolhead, see if it is noticed."
                        + (" Home test: nozzle homing dry run, Z must be homed." if self.homing is not None else "")),
                      T("FILAMENT TESTS: they extrude in the air, park over the purge area first."),
@@ -3685,6 +3691,7 @@ class OznLabSensor:
             self._mon_stop("print end")
         if self._crash is not None:
             self._crash_stop("print end")
+        self._babystep_prompt()
         if self._job is not None:
             try:
                 state = self.printer.lookup_object('print_stats').get_status(self.reactor.monotonic())['state']
@@ -3693,6 +3700,29 @@ class OznLabSensor:
             if state not in ('printing', 'paused'):   # streamed G-code: print_stats stays standby
                 self._job['end_state'] = state if state in ('cancelled', 'error') else 'complete'
                 self._job_finish()
+
+    def _babystep_prompt(self):
+        """the z offset was babystepped since the tap of this print: offer to keep it (Mainsail /
+        Fluidd popup), instead of the user having to remember OZNLAB_TAP_ADJUST"""
+        if self.last_tap_z is None:
+            return
+        try:
+            gm = self.printer.lookup_object('gcode_move')
+            z_now = gm.get_status(self.reactor.monotonic())['homing_origin'].z
+        except Exception:
+            return
+        delta = z_now - self.last_tap_z
+        if abs(delta) < 0.0005 or abs(self.tap_adjust_z + delta) > 1.:
+            return
+        c = "OZNLAB_MENU RUN="
+        self._prompt_items("OznLab: keep the babystep?", [
+            ('text', "You babystepped the z offset %+.3f during this print (%.3f -> %.3f)."
+                     % (delta, self.last_tap_z, z_now)),
+            ('text', "Keep it: every next tap lands there too (tap_adjust_z %.3f -> %.3f). "
+                     "SAVE_CONFIG makes it survive a restart." % (self.tap_adjust_z, self.tap_adjust_z + delta)),
+            ('row', [("Keep it", c + "TAPADJ", 'primary'),
+                     ("Keep it and SAVE_CONFIG", c + "TAPADJSAVE", 'warning')]),
+        ], [("No, forget it", "OZNLAB_MENU CLOSE=1", 'secondary')])
 
     TESTS = {'flow': 'MAX_FLOW', 'retract': 'RETRACT_TEST', 'temp': 'TEMP_SCAN'}
     cmd_TEST_help = ("Filament tests in the air, one entry point: OZNLAB_TEST TYPE=flow|retract|temp "
@@ -4650,6 +4680,10 @@ class OznLabHoming:
         oz._end_crash_test("trigger descent")
         speed = self.home_speed_cap(speed)
         self._prep_trigger(speed)
+        # the move before this one (the homing retract, a z hop, the travel to a mesh point) must
+        # be over and the hotend still: right after a fast stop the hotend mount is still ringing
+        # and the slope filter took that for a contact ("Probe triggered prior to movement")
+        th.wait_moves()
         pos = th.get_position()
         pos[2] = self.z_min if floor is None else max(self.z_min, floor)
         phoming = self.printer.lookup_object('homing')
@@ -4659,9 +4693,22 @@ class OznLabHoming:
         if mine:
             live = {'on': True}
             oz.sensor.add_client(lambda msg: live['on'])
-            oz.reactor.pause(oz.reactor.monotonic() + 0.3)
+        oz.reactor.pause(oz.reactor.monotonic() + 0.3)
         try:
-            trig = phoming.probing_move(self.ta, pos, speed, check_movement=check_movement)
+            for attempt in range(3):
+                z0 = th.get_position()[2]
+                trig = phoming.probing_move(self.ta, pos, speed, check_movement=False)
+                if z0 - trig[2] >= 0.05:
+                    break
+                # fired before the nozzle moved: still shaking, or a noise spike. Settle and retry.
+                logging.info("oznlab trigger: fired before the nozzle moved (attempt %d), retrying" % (attempt + 1))
+                th.wait_moves()
+                oz.reactor.pause(oz.reactor.monotonic() + 0.5)
+            else:
+                raise self.printer.command_error(
+                    "oznlab homing: the trigger fires before the nozzle moves, three times in a row. "
+                    "The toolhead is still shaking from the move before, or the sensor is noisy: check "
+                    "that the coil and its wires cannot move (OZNLAB_CHECK), or lower homing_speed")
         finally:
             if mine:
                 live['on'] = False
@@ -4673,7 +4720,26 @@ class OznLabHoming:
         th = self.printer.lookup_object('toolhead')
         speed = self.home_speed_cap(speed)
         slope, thr, sens = self._prep_trigger(speed)
-        trig = self.trigger_z(th, speed, floor, check_movement)
+        for attempt in range(3):
+            trig = self.trigger_z(th, speed, floor, check_movement)
+            try:
+                zs, hz_um = self._fine_taps(th, trig)
+                break
+            except self.gcode.error as e:
+                # the fine taps found no bed where the trigger fired: it fired early (the hotend
+                # was still shaking, or a spike). Carry on down from here on the trigger.
+                if attempt == 2 or not ('amplitude too small' in str(e) or 'no contact signature' in str(e)):
+                    raise
+                gcmd.respond_info("oznlab homing: no contact at the trigger point (%s), descending further" % e)
+        z_c = self._fine_result(zs)
+        self.last_fine = zs
+        self.last = dict(trigger=trig[2], contact=z_c, sens=hz_um, sens_assumed=sens,
+                         slope=slope, thr=thr, speed=speed)
+        return trig, z_c
+
+    def _fine_taps(self, th, trig):
+        """the fine taps around the trigger stop; returns (list of contact z, Hz/um of the last)"""
+        oz = self.oz
         # coarse contact is trig[2]; now the fine tap from 1 mm above it.
         # During G28 the toolhead runs in homing's temporary frame (Z ~ 1.5 x the axis length),
         # where every ordinary move is "out of range". Shift the frame so the trigger point is
@@ -4719,16 +4785,14 @@ class OznLabHoming:
             finally:
                 oz._sync_gcode_pos()
                 if oz._tap is not None: oz._release_tap()     # a fine tap that raised left it set
-        zs = [z + delta for z in zs]
+        return [z + delta for z in zs], hz_um
+
+    @staticmethod
+    def _fine_result(zs):
         kept = zs[1:]
         if len(kept) >= 2 and abs(kept[-1] - kept[-2]) <= 0.01:
-            z_c = 0.5 * (kept[-1] + kept[-2])
-        else:
-            zz = sorted(kept); z_c = zz[len(zz) // 2]
-        self.last_fine = zs
-        self.last = dict(trigger=trig[2], contact=z_c, sens=hz_um, sens_assumed=sens,
-                         slope=slope, thr=thr, speed=speed)
-        return trig, z_c
+            return 0.5 * (kept[-1] + kept[-2])
+        zz = sorted(kept); return zz[len(zz) // 2]
 
     def run_probe(self, gcmd):
         params = self.param_helper.get_probe_params(gcmd)

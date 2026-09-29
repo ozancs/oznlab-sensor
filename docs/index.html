@@ -525,6 +525,7 @@ position_min: -1</code></pre></div>
 
 <section class="sub" data-title="Push test" hidden>
 <h3>4.3 Does the coil feel the hotend?</h3>
+<p class="note warn"><b>Cold nozzle only.</b> You will touch the nozzle with your finger in this step. Make sure it is cold (the step refuses to start above 50 &#176;C).</p>
 <p>The console listens for 25 s. Keep your hands off for the first 3 s, then push the nozzle <b>up</b> with a finger three times, short pushes.</p>
 <p class="lbl run">Run</p>
 <div class="cb"><pre><code>OZNLAB_SETUP</code></pre></div>
@@ -680,7 +681,7 @@ OznLab monitor: on - clog and runout watch for this print</pre>
 </table></div>
 <p>When the print ends the console shows a short report: Z offset, PA, clog / runout and crash events, and the peak temperatures. <code>OZNLAB_REPORT</code> shows it again.</p>
 <p><small>Printing from OctoPrint or another host that streams G-code? Add <code>OZNLAB_REPORT</code> as the last line of PRINT_END, the end of the print is not detected otherwise.</small></p>
-<div class="note"><b>First layer:</b> babystep Z during the print until it looks right, then in the console:</div>
+<div class="note"><b>First layer:</b> babystep Z during the print until it looks right. When the print ends, a popup asks whether to keep that babystep (with <code>OZNLAB_PRINT_END</code> in your PRINT_END). Keep it, then <code>SAVE_CONFIG</code>. Or at any time in the console:</div>
 <div class="cb"><pre><code>OZNLAB_TAP_ADJUST
 SAVE_CONFIG</code></pre></div>
 <p>It folds the babystep into <code>tap_adjust_z</code>, so every next tap lands there. (By hand: too squished, raise <code>tap_adjust_z</code>; too loose, lower it.)</p>
@@ -861,6 +862,7 @@ SAVE_CONFIG</code></pre></div>
 <p>It taps after homing and stores the Z offset, which is then applied at every start.</p>
 <p class="lbl bad">If not</p>
 <div class="tw"><table class="fix">
+<tr><td><code>the trigger fires before the nozzle moves</code></td><td>The hotend was still shaking when the trigger armed, or the sensor is noisy. The descent waits and retries by itself three times. If it keeps happening: <code>OZNLAB_CHECK</code> for the noise, lower <code>homing_speed</code> in <code>[stepper_z]</code>.</td></tr>
 <tr><td><code>too close to the noise floor</code></td><td>Heat the nozzle. The sensor is less sensitive cold, and the command refuses to move rather than risk a missed trigger.</td></tr>
 <tr><td><code>home first (G28)</code> right after G28</td><td>Z did not home. Read what <code>G28</code> printed in the console, and compare your config with the block above.</td></tr>
 <tr><td><code>endstop_pin: probe:z_virtual_endstop, but nothing in the config is a probe</code></td><td>Route A needs <code>z_homing_probe: 1</code>; route B uses <code>oznlab:z_virtual_endstop</code>. Or put your old endstop pin back.</td></tr>
