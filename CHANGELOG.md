@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.9.19
+
+- The trigger threshold floor now follows the sensor noise measured in the moment before each descent (steppers on, bed hot, the toolhead just moved), not only the noise seen at startup; a retry raises it further. The refusal messages print the numbers: threshold, expected contact slope, noise at rest
+- Fixed: a trigger point where the fine taps found no bed raised an internal error ("Internal error on command G28", printer shutdown) instead of continuing the descent
+
 ## v0.9.18
 
 - Nozzle homing on a printer that homes and retracts fast: the trigger could fire in the first samples of the descent, while the hotend was still shaking from the move before ("Probe triggered prior to movement", or a Z 0 in the air followed by "contact amplitude too small"). Every trigger descent now waits for the previous move to finish and settles first; a trigger that fires before the nozzle has moved is retried after a pause; a trigger point where the fine taps find no bed is left behind and the descent continues on the trigger

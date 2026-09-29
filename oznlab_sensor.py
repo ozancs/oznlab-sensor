@@ -100,7 +100,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.9.18"
+VERSION = "0.9.19"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -4634,10 +4634,46 @@ class OznLabHoming:
         r = self.results; self.results = []
         return r
 
-    def _prep_trigger(self, speed):
+    def _rest_noise(self, rec, design):
+        """rms of the MCU filter output (low-pass, then difference) over frequencies recorded
+        with the nozzle at rest, Hz per sample; None when there are too few samples"""
+        if len(rec) < 12:
+            return None
+        y = None; prev = None; ds = []
+        for f in rec:
+            y = f if y is None else y + design.a * (f - y)
+            if prev is not None:
+                ds.append(y - prev)
+            prev = y
+        ds = ds[4:]                                     # the low-pass settling
+        if len(ds) < 8:
+            return None
+        # robust rms (median absolute deviation): a glitch or the tail of a move that slipped into
+        # the window must not set the floor, a sustained shake still does
+        ds = sorted(abs(d) for d in ds)
+        return 1.4826 * ds[len(ds) // 2]
+
+    def _record_rest(self, seconds=0.3):
+        """subscribe for a moment and return the frequencies seen (the nozzle must be at rest)"""
+        oz = self.oz
+        rec = []; on = {'on': True}
+        def cb(msg):
+            if not on['on']:
+                return False
+            for t, f, z in msg.get('data', ()):
+                if f > 0.:
+                    rec.append(f)
+            return True
+        oz.sensor.add_client(cb)
+        oz.reactor.pause(oz.reactor.monotonic() + seconds)
+        on['on'] = False
+        return rec
+
+    def _prep_trigger(self, speed, rest=None, boost=1.):
         """set the MCU filter and threshold for this descent speed; raises when the expected
         contact slope is too close to the noise floor (the trigger could miss and the nozzle
-        would plough on to position_min)"""
+        would plough on to position_min). rest: frequencies recorded at rest just before, the
+        floor then follows the noise of this moment. boost: raise the threshold (retries)"""
         oz = self.oz; sensor = oz.sensor
         sps = float(sensor.get_samples_per_second())
         # The sensitivity rises with the hotend temperature (about 2 Hz/um cold, 10+ hot). A value
@@ -4655,14 +4691,19 @@ class OznLabHoming:
         noise = (oz.last_stats or {}).get('noise') or 4.     # Hz rms per raw sample
         # first-order LP then a difference: sigma_d = a * sigma * sqrt(2 / (2 - a))
         noise_d = noise * design.a * math.sqrt(2. / (2. - design.a))
+        measured = self._rest_noise(rest, design) if rest else None
+        if measured is not None:
+            noise_d = max(noise_d, measured)
         floor = oz.home_noise_sigma * noise_d
-        thr = max(oz.home_trigger_frac * slope, floor)
+        thr = max(oz.home_trigger_frac * slope, floor) * boost
+        self.last_prep = dict(slope=slope, thr=thr, sens=sens, noise_d=noise_d, measured=measured, speed=speed)
         if thr > 0.75 * slope:
             raise self.printer.command_error(
                 "oznlab homing: expected contact slope %.1f Hz/sample (%.1f Hz/um x %.1f mm/s at %.0f sps) "
-                "is too close to the noise floor %.1f Hz/sample - the trigger could miss. Heat the hotend "
+                "is too close to the noise floor %.1f Hz/sample%s - the trigger could miss. Heat the hotend "
                 "(sensitivity rises with temperature), lower data_rate, or raise the homing speed."
-                % (slope, sens, speed, sps, floor))
+                % (slope, sens, speed, sps, floor,
+                   "" if measured is None else " (noise at rest now %.1f Hz/sample)" % measured))
         self.sos.set_filter_design(design)
         self.sos.set_offset_scale(0, 1000. * sensor.convert_raw_to_frequency(1), auto_offset=True)
         self.ta.set_raw_range(0, MAX_VALID_RAW_VALUE)
@@ -4693,22 +4734,29 @@ class OznLabHoming:
         if mine:
             live = {'on': True}
             oz.sensor.add_client(lambda msg: live['on'])
-        oz.reactor.pause(oz.reactor.monotonic() + 0.3)
         try:
             for attempt in range(3):
+                # the settle window doubles as a noise measurement: the threshold floor follows
+                # the noise of this moment (steppers on, bed hot), and goes up on every retry
+                rest = self._record_rest(0.3 if attempt == 0 else 0.5)
+                self._prep_trigger(speed, rest, boost=1.5 ** attempt)
                 z0 = th.get_position()[2]
                 trig = phoming.probing_move(self.ta, pos, speed, check_movement=False)
                 if z0 - trig[2] >= 0.05:
                     break
-                # fired before the nozzle moved: still shaking, or a noise spike. Settle and retry.
-                logging.info("oznlab trigger: fired before the nozzle moved (attempt %d), retrying" % (attempt + 1))
+                lp = self.last_prep
+                logging.info("oznlab trigger: fired before the nozzle moved (attempt %d): threshold %.1f, "
+                             "slope %.1f, noise at rest %s Hz/sample"
+                             % (attempt + 1, lp['thr'], lp['slope'], lp['measured']))
                 th.wait_moves()
-                oz.reactor.pause(oz.reactor.monotonic() + 0.5)
             else:
+                lp = self.last_prep
                 raise self.printer.command_error(
-                    "oznlab homing: the trigger fires before the nozzle moves, three times in a row. "
-                    "The toolhead is still shaking from the move before, or the sensor is noisy: check "
-                    "that the coil and its wires cannot move (OZNLAB_CHECK), or lower homing_speed")
+                    "oznlab homing: the trigger fires before the nozzle moves, three times in a row "
+                    "(threshold %.1f Hz/sample, expected contact slope %.1f, noise at rest %s). "
+                    "The sensor is noisy or something moves the hotend: check that the coil and its "
+                    "wires cannot move (OZNLAB_CHECK), heat the nozzle, or raise homing_speed"
+                    % (lp['thr'], lp['slope'], "%.1f" % lp['measured'] if lp['measured'] is not None else "n/a"))
         finally:
             if mine:
                 live['on'] = False
@@ -4719,13 +4767,14 @@ class OznLabHoming:
         oz = self.oz
         th = self.printer.lookup_object('toolhead')
         speed = self.home_speed_cap(speed)
-        slope, thr, sens = self._prep_trigger(speed)
+        self._prep_trigger(speed)                  # refuses early when the slope is hopeless
         for attempt in range(3):
             trig = self.trigger_z(th, speed, floor, check_movement)
+            lp = self.last_prep; slope, thr, sens = lp['slope'], lp['thr'], lp['sens']
             try:
                 zs, hz_um = self._fine_taps(th, trig)
                 break
-            except self.gcode.error as e:
+            except self.printer.command_error as e:
                 # the fine taps found no bed where the trigger fired: it fired early (the hotend
                 # was still shaking, or a spike). Carry on down from here on the trigger.
                 if attempt == 2 or not ('amplitude too small' in str(e) or 'no contact signature' in str(e)):
@@ -4892,7 +4941,8 @@ class OznLabZEndstop:
         # the LDC1612 is only sampled while a host client is subscribed; the MCU trigger needs data
         live = self._live = {'on': True}                     # bound here: _stop_live sets self._live to None
         self.oz.sensor.add_client(lambda msg: live['on'])
-        self.oz.reactor.pause(self.oz.reactor.monotonic() + 0.3)
+        self.printer.lookup_object('toolhead').wait_moves()  # z hop / travel over, hotend at rest
+        self._rest = self.h._record_rest(0.3)
 
     def _move_end(self, hmove):
         # sent after every homing move, failed ones too; keep the stream only between the two moves
@@ -4912,7 +4962,7 @@ class OznLabZEndstop:
         speed = self._speeds.pop(0) if self._speeds else self.h.speed
         speed = self.h.home_speed_cap(speed)
         try:
-            self.h._prep_trigger(speed)            # the threshold follows the descent speed
+            self.h._prep_trigger(speed, getattr(self, '_rest', None))   # threshold: speed + noise now
             return self.ta.home_start(print_time, sample_time, sample_count, rest_time, triggered)
         except Exception:
             self._stop_live()
