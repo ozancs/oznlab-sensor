@@ -22,7 +22,7 @@ SECTION = """
 i2c_mcu: %(mcu)s
 i2c_bus: %(bus)s
 i2c_address: 43               # JP1 on 2B = 43 (default), on 2A = 42
-data_rate: 200
+data_rate: 100
 tap_adjust_z: 0.04            # first layer too squished? babystep, then OZNLAB_TAP_ADJUST
 pa_speed: 3.0
 pa_duration: 1.5

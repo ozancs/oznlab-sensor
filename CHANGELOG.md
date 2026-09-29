@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.9.20
+
+- `data_rate` default 100 (was 200), in the module, the config template and the installer. Everything is tested at 100, and the sensor resolution is finer there
+- With `z_homing: 1` and `data_rate` above 200 a warning at start says to set 100: at 400 samples/s the contact slope per sample is lost in the noise with a cold nozzle and homing fails
+
 ## v0.9.19
 
 - The trigger threshold floor now follows the sensor noise measured in the moment before each descent (steppers on, bed hot, the toolhead just moved), not only the noise seen at startup; a retry raises it further. The refusal messages print the numbers: threshold, expected contact slope, noise at rest

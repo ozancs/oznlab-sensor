@@ -9,7 +9,7 @@
 #   i2c_bus: i2c3_PB3_PB4
 #   i2c_address: 43          # JP1 on 2B = 43, on 2A = 42 (with a BTT Eddy on the bus use 2B)
 #   reg_drive_current: 29
-#   data_rate: 200           # LDC samples/s; lower = finer resolution (400 -> 23 Hz steps, 200 -> 12, 100 -> 6)
+#   data_rate: 100           # LDC samples/s; lower = finer resolution (400 -> 23 Hz steps, 200 -> 12, 100 -> 6)
 #   #verbose: 0              # 1 = per-step numbers on the console (always in klippy.log); VERBOSE=1 per command
 #   #update_check: 1         # at start, ask GitHub for a newer version and say so on the console (0 = off)
 #   #tap_sigma: 6.0          # arm threshold, x slew noise
@@ -100,7 +100,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.9.19"
+VERSION = "0.9.20"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -296,7 +296,7 @@ class OznLabSensor:
                                    "the OznLab board to 2B and set i2c_address: 43"
                                    % (oc.get_name(), self.i2c_addr, config.get_name()))
         # LDC conversion time = 1/data_rate: 400/s -> ~23 Hz steps, 200/s -> ~12 Hz, 100/s -> ~6 Hz
-        self.sensor.data_rate = config.getint('data_rate', 200, minval=50, maxval=400)
+        self.sensor.data_rate = config.getint('data_rate', 100, minval=50, maxval=400)
         # upstream sized ffreader's clock-sync smoothing for its own default rate; resize it for ours
         try:
             from . import bulk_sensor
@@ -570,6 +570,17 @@ class OznLabSensor:
 
     def _on_ready(self):
         if self.update_check: self._upd_start()
+        if self.homing is not None and self.sensor.data_rate > 200:
+            # measured on a user's printer: at 400 samples/s a cold nozzle gives a contact slope of
+            # 15 Hz/sample against a noise floor of 32, the trigger fires on noise or not at all
+            msg = ("OznLab: data_rate %d is too high for Z homing with the nozzle (the contact slope per "
+                   "sample gets lost in the noise, homing fails). Set data_rate: 100 in [%s]"
+                   % (self.sensor.data_rate, self.cfg_name))
+            self.gcode.respond_info(msg)
+            try:
+                self.printer.lookup_object('configfile').runtime_warning(msg)
+            except Exception:
+                pass
         if self._cfg_raw(self.cfg_name).get('reg_drive_current') is None:
             def later(et):
                 with self.gcode.get_mutex():         # not in the middle of a startup macro's moves
