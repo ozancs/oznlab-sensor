@@ -36,14 +36,15 @@ into `printer.cfg` and restarts Klipper (`BOARD=ebb ./install.sh` skips the ques
 `config/oznlab_sensor.cfg` lists every option. Then run `OZNLAB_SETUP` (or `OZNLAB_MENU`)
 in the console, one step per call.
 
-In PRINT_START, after heating and before the prime line:
+In PRINT_START, in place of the line that heats the nozzle:
 
 ```
-OZNLAB_PRINT_START
+OZNLAB_PRINT_START EXTRUDER={extruder}
 ```
 
-(filament type from the gcode file; a purge bucket goes into the config as `pa_x` / `pa_y`,
-see guide 5.1)
+(tap at 150 C with a clean tip, heat, filament type from the gcode file, PA in the air;
+a nozzle wipe macro goes on the line as `BRUSH=`, a purge bucket into the config as
+`pa_x` / `pa_y` / `pa_z`, see guide 5.1)
 
 and `OZNLAB_MONITOR` after the prime line, `OZNLAB_PRINT_END` in PRINT_END and CANCEL_PRINT.
 

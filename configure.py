@@ -17,24 +17,17 @@ BOARDS = [
 SECTION = """
 # ---------------------------------------------------------------------
 # OznLab Sensor (written by configure.py; the guide explains every line)
+# Keep this section here in printer.cfg, not in an included file:
+# SAVE_CONFIG writes the values the module measures into it.
 # ---------------------------------------------------------------------
 [oznlab_sensor hotend]
 i2c_mcu: %(mcu)s
 i2c_bus: %(bus)s
 i2c_address: 43               # JP1 on 2B = 43 (default), on 2A = 42
-data_rate: 100
 tap_adjust_z: 0.04            # first layer too squished? babystep, then OZNLAB_TAP_ADJUST
-pa_speed: 3.0
-pa_duration: 1.5
-clog_ratio: 2.0
-runout_ratio: 0.25
-confirm_windows: 3
-confirm_time: 10.0
-monitor_min_z: 0.5
 clog_gcode: PAUSE
 runout_gcode: PAUSE
 """
-
 
 def say(msg):
     print(msg)

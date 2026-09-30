@@ -436,17 +436,10 @@ cd oznlab-sensor
 i2c_mcu: EBBCan
 i2c_bus: i2c3_PB3_PB4
 i2c_address: 43
-data_rate: 100
 tap_adjust_z: 0.04            # first layer too squished? babystep, then OZNLAB_TAP_ADJUST
-pa_speed: 3.0
-pa_duration: 1.5
-clog_ratio: 2.0
-runout_ratio: 0.25
-confirm_windows: 3
-confirm_time: 10.0
-monitor_min_z: 0.5
 clog_gcode: PAUSE
 runout_gcode: PAUSE</code></pre></div>
+<p>That is all of it. The module measures the rest (drive current, the coil's sensitivity at every nozzle temperature, your Z offset, the PA method) and keeps it in this section with <code>SAVE_CONFIG</code>. Updating from an older version? Lines like <code>data_rate</code> still load, do nothing, and the console says which ones can go.</p>
 </section>
 
 <section class="sub" data-title="stepper_z" hidden>
@@ -618,18 +611,20 @@ OznLab: pa_scale_asa ... (= ... / tau ..., pa_method ...), for ASA - SAVE_CONFIG
 
 <section class="sub" data-title="PRINT_START">
 <h3>5.1 PRINT_START</h3>
-<p><b>1.</b> Open <code>printer.cfg</code> and find your <code>[gcode_macro PRINT_START]</code>. Add this line after the line that heats the nozzle (<code>M109</code>) and before the prime line:</p>
-<div class="cb"><pre><code>    OZNLAB_PRINT_START</code></pre></div>
+<p><b>1.</b> Open <code>printer.cfg</code> and find your <code>[gcode_macro PRINT_START]</code>. Put this line in place of the line that heats the nozzle (<code>M109 S...</code>), with the same temperature variable your macro uses:</p>
+<div class="cb"><pre><code>    OZNLAB_PRINT_START EXTRUDER={extruder}</code></pre></div>
 <p><b>2.</b> At the end of the same macro, as the last line:</p>
 <div class="cb"><pre><code>    OZNLAB_MONITOR</code></pre></div>
-<p>That is all for most printers. At every print the first line reads the filament type from the gcode file, measures pressure advance in the air over the front left corner of the bed, waits 15 s and taps the bed centre for the Z offset. <code>OZNLAB_MONITOR</code> watches for clogs and runout.</p>
+<p>That is all for most printers. At every print the first line warms the nozzle to 150 &#176;C (warm enough for a clean contact, too cold to ooze), taps the bed centre for the Z offset, heats to your printing temperature, reads the filament type from the gcode file and measures pressure advance in the air over the front left corner of the bed. <code>OZNLAB_MONITOR</code> watches for clogs and runout.</p>
+<p>Have a nozzle wipe macro? Name it and it runs right before the tap: <code>OZNLAB_PRINT_START EXTRUDER={extruder} BRUSH=CLEAN_NOZZLE</code>. Your macro already taps somewhere (an <code>OZNLAB_TAP</code> after your own wipe)? Fine, the line notices a tap was done since homing and does not tap again.</p>
 
 <p class="lbl use">Optional: purge bucket</p>
 <p>These are not typed in the console. They go into printer.cfg, in the <code>[oznlab_sensor hotend]</code> section, next to the lines already there. Use your own coordinates:</p>
 <p class="where">in <code>[oznlab_sensor hotend]</code></p>
 <div class="cb"><pre><code>pa_x: 260
-pa_y: 240</code></pre></div>
-<p><small>Where the PA test extrudes: over a purge bucket, or anywhere plastic can drop. Save the file and restart Klipper.</small></p>
+pa_y: 240
+pa_z: 10</code></pre></div>
+<p><small>Where the PA test extrudes: over a purge bucket, or anywhere plastic can drop, and how high the nozzle is there (10 mm if you leave <code>pa_z</code> out). Save the file and restart Klipper.</small></p>
 
 <p class="lbl use">What it looks like</p>
 <p>An example PRINT_START. Yours has other lines and that is fine; only the two OznLab lines are new.</p>
@@ -640,8 +635,7 @@ gcode:
     G28
     M190 S{bed}
     BED_MESH_CALIBRATE
-    M109 S{extruder}
-    OZNLAB_PRINT_START          ; new
+    OZNLAB_PRINT_START EXTRUDER={extruder}   ; new, replaces M109
     G1 X5 Y5 Z0.3 F6000         ; your prime line
     G1 X100 E15 F1200
     OZNLAB_MONITOR              ; new, last line</code></pre></div>
@@ -676,7 +670,7 @@ OznLab monitor: on - clog and runout watch for this print</pre>
 <p class="lbl bad">If not</p>
 <div class="tw"><table class="fix">
 <tr><td><code>OznLab PA: no reliable measurement</code></td><td>The nozzle was not hot yet, or no filament came out. Check that it runs after the heat-up in PRINT_START.</td></tr>
-<tr><td><code>OznLab tap: the taps disagree</code></td><td>Ooze on the tip. Give the hotend more time before the tap: <code>SETTLE=30</code> on <code>OZNLAB_PRINT_START</code>.</td></tr>
+<tr><td><code>OznLab tap: the taps disagree</code></td><td>Something on the tip. With <code>EXTRUDER=</code> the tap is at 150 &#176;C, so it is old plastic: a wipe macro (<code>BRUSH=</code>), or take it off by hand once. Without <code>EXTRUDER=</code> the tap is hot and it is ooze: use <code>EXTRUDER=</code>.</td></tr>
 <tr><td><code>OznLab monitor: not started</code></td><td><code>OZNLAB_CALIBRATE_PA</code> did not run earlier in this print.</td></tr>
 </table></div>
 <p>When the print ends the console shows a short report: Z offset, PA, clog / runout and crash events, and the peak temperatures. <code>OZNLAB_REPORT</code> shows it again.</p>
@@ -770,11 +764,11 @@ OZNLAB_CRASH TEST=1</code></pre></div>
 <p>With a BTT Eddy or another probe, keep using it for the mesh. This is for printers without one.</p>
 <p><b>Once:</b> run the wizard. A popup in Mainsail / Fluidd lets you jog the nozzle to the four corners of the usable bed and pick the grid. It adds a <code>[bed_mesh]</code> section if you have none.</p>
 <div class="cb"><pre><code>OZNLAB_MESH_SETUP</code></pre></div>
-<p><b>Measure:</b> heat the nozzle to printing temperature and the bed to its printing temperature, brush the nozzle, retract a few mm, then:</p>
+<p><b>Measure:</b> nozzle and bed at printing temperature, nozzle brushed, filament retracted a few mm, then:</p>
 <div class="cb"><pre><code>OZNLAB_MESH
 SAVE_CONFIG</code></pre></div>
 <p>Every point gets one squash tap (not used) and two taps that must agree within 0.015 mm. The result goes into Klipper's normal <code>[bed_mesh]</code> and is stored as the <code>default</code> profile (<code>oznlab</code> if the printer also has a probe). Run from the console, it turns the heaters off when it is done.</p>
-<div class="note">Do it hot. Below about 180 &#176;C the plastic on the tip is soft and the points drift.</div>
+<div class="note">Best hot: at printing temperature the plastic on the tip is soft and the contact is clean. Started with a cold nozzle, it homes and heats to 150 &#176;C by itself, and the heaters go off again afterwards.</div>
 <p>Klipper does not load a mesh after a restart, so load it in PRINT_START (step 5.1), or measure only under the print every time (needs object labels in the slicer):</p>
 <div class="cb"><pre><code>OZNLAB_MESH ADAPTIVE=1</code></pre></div>
 <p>To compare two profiles, for example the probe's <code>default</code> and the nozzle's <code>oznlab</code>:</p>
@@ -856,14 +850,14 @@ z_hop: 5</code></pre></div>
 <p><small>Keep <code>z_homing: 1</code>: <code>z_homing_probe: 1</code> needs it.</small></p>
 
 <p class="lbl run">3. Store the Z offset</p>
-<p>Restart Klipper, <code>G28</code> (now with the nozzle), heat the nozzle, then:</p>
+<p>Restart Klipper, then:</p>
 <div class="cb"><pre><code>OZNLAB_SETUP STEP=6
 SAVE_CONFIG</code></pre></div>
 <p>It taps after homing and stores the Z offset, which is then applied at every start.</p>
 <p class="lbl bad">If not</p>
 <div class="tw"><table class="fix">
 <tr><td><code>the trigger fires before the nozzle moves</code></td><td>The hotend was still shaking when the trigger armed, or the sensor is noisy. The descent waits and retries by itself three times. If it keeps happening: <code>OZNLAB_CHECK</code> for the noise, lower <code>homing_speed</code> in <code>[stepper_z]</code>.</td></tr>
-<tr><td><code>too close to the noise floor</code></td><td>Heat the nozzle. The sensor is less sensitive cold, and the command refuses to move rather than risk a missed trigger.</td></tr>
+<tr><td><code>too close to the noise floor</code></td><td>The message says which: no tap yet (run <code>OZNLAB_TAP</code> once, it measures the sensitivity) or a cold nozzle with a noisy sensor. The command refuses to move rather than risk a missed trigger.</td></tr>
 <tr><td><code>home first (G28)</code> right after G28</td><td>Z did not home. Read what <code>G28</code> printed in the console, and compare your config with the block above.</td></tr>
 <tr><td><code>endstop_pin: probe:z_virtual_endstop, but nothing in the config is a probe</code></td><td>Route A needs <code>z_homing_probe: 1</code>; route B uses <code>oznlab:z_virtual_endstop</code>. Or put your old endstop pin back.</td></tr>
 <tr><td><code>there is already a probe ... Klipper allows one</code></td><td>You set <code>z_homing_probe: 1</code> next to another probe. Take route B, or remove that probe's section.</td></tr>
@@ -873,17 +867,9 @@ SAVE_CONFIG</code></pre></div>
 <p><small>On our printer: the trigger stops 0.05 to 0.09 mm past contact at 3 mm/s. Three G28 in a row with the nozzle put Z 0 within 0.007 mm of each other and within 0.01 mm of the tap contact.</small></p>
 </section>
 
-<section class="sub" data-title="Thermal" hidden>
-<div class="gain"><span class="gain-k">You get</span> how much the nozzle drops per &#176;C as the hotend heats up.</div>
-<h3>6.7 Thermal calibration</h3>
-<p>Taps at several temperatures and measures how much the nozzle moves per &#176;C. Not needed if you tap at printing temperature every print (step 5.1 does). Unload the filament first and park over a clean spot. It waits 40 s at each temperature (<code>SETTLE=</code> changes that); on our printer the result was 0.075 &#181;m per &#176;C, so small that tapping at 150 &#176;C and printing at 255 &#176;C is off by under 0.01 mm.</p>
-<div class="cb"><pre><code>OZNLAB_THERMAL_CAL
-SAVE_CONFIG</code></pre></div>
-</section>
-
 <section class="sub" data-title="Bed level" hidden>
 <div class="gain"><span class="gain-k">You get</span> a levelled bed or gantry from nozzle taps, no probe needed.</div>
-<h3>6.8 Bed level (Z tilt) with the nozzle</h3>
+<h3>6.7 Bed level (Z tilt) with the nozzle</h3>
 <p>Printers with two or more Z motors level the bed with <code>Z_TILT_ADJUST</code> or <code>QUAD_GANTRY_LEVEL</code>, which need a probe. <code>OZNLAB_Z_TILT</code> does the same with nozzle taps at the points of your <code>[z_tilt]</code> or <code>[quad_gantry_level]</code> section, and Klipper's own maths moves the motors. The section is needed even without a probe, because it says where the motors are. An example for three motors:</p>
 <div class="cb"><pre><code>[z_tilt]
 z_positions:
@@ -898,7 +884,7 @@ speed: 150
 horizontal_move_z: 5
 retries: 5
 retry_tolerance: 0.01</code></pre></div>
-<p>Home, heat the nozzle, then <code>OZNLAB_Z_TILT</code> (or the menu: Bed level). It taps every point, adjusts, and repeats until the points agree within <code>retry_tolerance</code>. Home Z again afterwards, the motors moved. With <code>z_homing: 1</code> the taps are trigger descents (fast, small push); otherwise two fitted taps per point.</p>
+<p><code>OZNLAB_Z_TILT</code> (or the menu: Bed level). It homes and heats the nozzle by itself when needed. It taps every point, adjusts, and repeats until the points agree within <code>retry_tolerance</code>. Home Z again afterwards, the motors moved. With <code>z_homing: 1</code> the taps are trigger descents (fast, small push); otherwise two fitted taps per point.</p>
 </section>
 </section>
 
@@ -910,7 +896,7 @@ retry_tolerance: 0.01</code></pre></div>
 <div class="tw"><table>
 <tr><th>Command</th><th>What it does</th></tr>
 <tr><td><code>OZNLAB_MENU</code></td><td>Popup with every tool as a button (Mainsail and Fluidd): one page each for Z offset, pressure advance, bed mesh, Z homing, and setup and tests. Every page says what each button does. "All commands" lists the console commands by group.</td></tr>
-<tr><td><code>OZNLAB_PRINT_START</code></td><td>Filament, pressure advance, settle and tap in one line (step 5.1).</td></tr>
+<tr><td><code>OZNLAB_PRINT_START EXTRUDER=</code></td><td>Warm tap with a clean tip, heat, filament, pressure advance: one line (step 5.1).</td></tr>
 <tr><td><code>OZNLAB_PRINT_END</code></td><td>Stops the clog / runout and crash watch (step 5.2).</td></tr>
 <tr><td><code>OZNLAB_SETUP</code></td><td>Guided setup, one step per call.</td></tr>
 <tr><td><code>OZNLAB_REPORT</code></td><td>Summary of the current or last print.</td></tr>
@@ -925,14 +911,13 @@ retry_tolerance: 0.01</code></pre></div>
 <tr><td><code>OZNLAB_MESH_SETUP</code></td><td>Mesh area wizard (popup).</td></tr>
 <tr><td><code>OZNLAB_MESH [ADAPTIVE=1]</code></td><td>Bed mesh with the nozzle.</td></tr>
 <tr><td><code>OZNLAB_MESH_COMPARE</code></td><td>Shape difference between two mesh profiles.</td></tr>
-<tr><td><code>OZNLAB_Z_TILT</code></td><td>Bed level with nozzle taps at your <code>[z_tilt]</code> / <code>[quad_gantry_level]</code> points (step 6.8).</td></tr>
+<tr><td><code>OZNLAB_Z_TILT</code></td><td>Bed level with nozzle taps at your <code>[z_tilt]</code> / <code>[quad_gantry_level]</code> points (step 6.7).</td></tr>
 <tr><td><code>OZNLAB_HOME_TEST</code></td><td>Dry run of nozzle Z homing.</td></tr>
 <tr><td><code>OZNLAB_CRASH</code></td><td>Crash watch. <code>OFF=1</code>, <code>STATUS=1</code>, <code>TEST=1</code>.</td></tr>
 <tr><td><code>OZNLAB_TEST TYPE=flow|retract|temp</code></td><td>The three filament tests from one command (same as the three below).</td></tr>
 <tr><td><code>OZNLAB_MAX_FLOW</code></td><td>Volumetric limit for the slicer.</td></tr>
 <tr><td><code>OZNLAB_RETRACT_TEST</code></td><td>Retraction length for the slicer.</td></tr>
 <tr><td><code>OZNLAB_TEMP_SCAN</code></td><td>Pressure vs temperature.</td></tr>
-<tr><td><code>OZNLAB_THERMAL_CAL</code></td><td>Nozzle drift per &#176;C.</td></tr>
 <tr><td><code>OZNLAB_STREAM DURATION= FILE=</code></td><td>Raw samples to a CSV file.</td></tr>
 </table></div>
 

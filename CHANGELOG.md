@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.10.0
+
+Less to know, less to type. The module measures what it needs and keeps it.
+
+- `OZNLAB_PRINT_START EXTRUDER=<printing temperature>` is the whole start routine now, in place of the macro's M109: nozzle to 150 C (a clean contact, no ooze), `BRUSH=<macro>` if you have a wipe, tap over the bed centre, heat to the printing temperature, filament, PA. Without `EXTRUDER=` it works as before (hot: PA, settle, tap). A tap done since the last G28, an `OZNLAB_TAP` of your own in the macro, is not repeated
+- `pa_z` (default 10): the nozzle height during the PA test of `OZNLAB_PRINT_START`, next to `pa_x` / `pa_y` (a purge bucket beside the bed may want less than the 20 mm it used to lift to). `PA_Z=` on the command overrides it
+- The installer's section says in its header that it must stay in printer.cfg, not in an included file
+
+- One sensitivity model. Every tap measures the coil's Hz/um at the nozzle temperature of that moment; the values are kept per 20 C and written to the config (`sens_table`, kept by SAVE_CONFIG). The trigger, the crash watch and the tap checks all take their number from there, at any temperature, with a safe lower value between the measured ones. Before the first tap at a temperature, a mesh or a Z tilt does one plain tap at the bed centre to learn it. `home_assume_sens`, `home_trigger_frac`, `home_noise_sigma`, `home_lowpass` are gone
+- `OZNLAB_THERMAL_CAL` is gone (nothing used its result); `thermal_um_c` / `thermal_ref_t` are ignored
+- `data_rate` is gone: the LDC runs at 100 samples/s, the rate everything was tested at
+- Commands that touch the bed (`OZNLAB_TAP`, `OZNLAB_MESH`, `OZNLAB_Z_TILT`, `OZNLAB_HOME_TEST`) home and heat the nozzle (150 C, or your current target when it is hot already) by themselves instead of asking for it. `TEMP=` sets another temperature, `TEMP=0` skips the heating. The heaters go off afterwards as before. `mesh_min_temp` is ignored
+- Old options still load and do nothing; the start-up lists the lines that can go
+- The config template, the installer's section and the guide show the handful of lines a user decides: i2c, `tap_adjust_z`, `pa_x` / `pa_y`, the watch actions, `z_homing`. Every tuning option keeps working, documented in the source next to where it is used
+- `OZNLAB_HELP` lists the everyday commands; the rarely needed ones are one line, `ALL=1` shows them
+- `OZNLAB_CHECK` shows the sensitivity table
+- A duplicate, unreachable tests page in the menu code is gone
+
 ## v0.9.21
 
 - The trigger works with a cold nozzle too. Its filter now looks at the change over 1, 2 or 4 samples instead of always 1: a longer span gives the small contact slope of a cold nozzle about three times more room above the noise, for a trigger that fires one or two samples later. The shortest span with a safe margin is taken, so with a hot nozzle nothing changes
