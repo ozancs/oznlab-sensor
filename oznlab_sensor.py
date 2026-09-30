@@ -1453,13 +1453,14 @@ class OznLabSensor:
         if A1 + A2 == 0.: return None
         return a, A1 / (A1 + A2), math.sqrt(max(sse, 0.) / len(pts))
 
-    @staticmethod
-    def _decay_why(dec):
+    def _decay_why(self, dec):
         """why a decay fit is not usable, or None"""
         if dec is None: return "no clear fall"
         # the fall is slower than the rise on some hotends (0.45 s seen), so pa_tau_max
         # (a rise limit) does not apply here
         if dec[0] > 1.2: return "fall too slow"
+        if dec[0] < 2.5 / max(self.sensor.data_rate, 1):
+            return "the fall is too short to measure (%.0f ms, under 3 samples)" % (1000. * dec[0])
         if dec[1] < 0.93: return "noisy fall"
         return None
 
@@ -1467,8 +1468,10 @@ class OznLabSensor:
         """why a fast fit is not usable, or None"""
         if fa is None: return "no clear fast drop"
         if abs(P) < 350.: return "pressure step too small, raise pa_speed"
-        if fa[0] < 1.5 / max(self.sensor.data_rate, 1):
-            return "the drop is faster than data_rate %d can see" % self.sensor.data_rate
+        if fa[0] < 2.5 / max(self.sensor.data_rate, 1):
+            # 2 samples of fall are not a time constant: a fit like that read 0.020 s on a hotend
+            # whose real tau was 0.060 and set a pa_scale three times too large
+            return "the fall is too short to measure (%.0f ms, under 3 samples)" % (1000. * fa[0])
         if not 0.25 <= fa[1] <= 1.05: return "no clear fast drop"
         if fa[2] > 0.08 * abs(P) + 30.: return "noisy fall"
         return None
@@ -1835,8 +1838,8 @@ class OznLabSensor:
         gcmd.respond_info(msg)
 
     cmd_PA_SCALE_help = ("One-time setup per filament: OZNLAB_PA_SCALE PATTERN_PA=<best PA from a pattern test> "
-                         "[TYPE=ASA] [TEMP=250] [MEASURE=1] -> measures tau now (same filament and temperature "
-                         "as the pattern test) and stores pa_scale_<filament>")
+                         "[TYPE=ASA] [TEMP=250] [SAMPLES=3] -> measures tau now, three times, they must agree "
+                         "(same filament and temperature as the pattern test) and stores pa_scale_<filament>")
     def cmd_PA_SCALE(self, gcmd):
         pattern = self._gf(gcmd, 'PATTERN_PA', above=0.)
         if gcmd.get('TYPE', None) is not None:
@@ -1848,11 +1851,18 @@ class OznLabSensor:
             self._free(gcmd, "pa scale")
             self._filament_and_temp(gcmd)
             self._lift_clear(gcmd)
+            # the scale is used by every print from now on: three measurements, and they must agree
             self.cmd_CALIBRATE_PA(self.gcode.create_gcode_command(
-                "OZNLAB_CALIBRATE_PA", "OZNLAB_CALIBRATE_PA", {'APPLY': 0, 'SENSOR': self.name}))
+                "OZNLAB_CALIBRATE_PA", "OZNLAB_CALIBRATE_PA",
+                {'APPLY': 0, 'SENSOR': self.name, 'SAMPLES': gcmd.get_int('SAMPLES', 3, minval=1, maxval=5)}))
             if self.pa_cal is None:
                 raise gcmd.error("oznlab: no reliable tau just now - nothing stored. Check the message above, "
                                  "prime the nozzle and run OZNLAB_PA_SCALE again")
+            taus = sorted(r[2] for r in self.pa_cal['results'])
+            if len(taus) >= 2 and taus[-1] > 1.35 * taus[0]:
+                raise gcmd.error("oznlab: the measurements disagree (tau %s s), the melt zone was not steady - "
+                                 "nothing stored. Extrude a few mm, wait 10 s, run OZNLAB_PA_SCALE again"
+                                 % ", ".join("%.3f" % t for t in taus))
         key = self.filament
         scale = round(pattern / self.pa_cal['tau'], 4)      # checked as it will be saved
         if not 0.005 < scale <= 3.0:                # must stay inside the range the config accepts at boot

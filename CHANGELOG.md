@@ -5,6 +5,7 @@
 Less to know, less to type. The module measures what it needs and keeps it.
 
 - `OZNLAB_PRINT_START EXTRUDER=<printing temperature>` is the whole start routine now, in place of the macro's M109: nozzle to 150 C (a clean contact, no ooze), `BRUSH=<macro>` if you have a wipe, tap over the bed centre, heat to the printing temperature, filament, PA. Without `EXTRUDER=` it works as before (hot: PA, settle, tap). A tap done since the last G28, an `OZNLAB_TAP` of your own in the macro, is not repeated
+- `OZNLAB_PA_SCALE` measures three times and refuses when they disagree by more than 35 %; a fall shorter than 3 samples (25 ms) is no longer accepted as a time constant by any method. Seen on a user's printer: one 20 ms reading where the real tau was 60 ms set the scale three times too large, and every print then got three times the PA of the pattern test
 - `pa_z` (default 10): the nozzle height during the PA test of `OZNLAB_PRINT_START`, next to `pa_x` / `pa_y` (a purge bucket beside the bed may want less than the 20 mm it used to lift to). `PA_Z=` on the command overrides it
 - The installer's section says in its header that it must stay in printer.cfg, not in an included file
 
