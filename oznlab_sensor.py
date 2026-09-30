@@ -72,7 +72,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.10.0"
+VERSION = "0.10.1"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -356,7 +356,7 @@ class OznLabSensor:
         self.report_sensors = [x.strip() for x in config.get('report_sensors', '').split(',') if x.strip()]
         self._job = None; self._last_job = None; self._job_timer = None
         self.last_tap_z = None; self.last_pa = None
-        self.pa_prime = config.getfloat('pa_prime', 12.0, minval=0., maxval=50.)    # mm extruded first: refill the melt zone after ooze
+        self.pa_prime = config.getfloat('pa_prime', 20.0, minval=0., maxval=50.)    # mm extruded first: pushes out the plastic that sat in the hotend
         # decay (default): tau from the pressure fall after the extruder stops - the gear holds the
         # filament there, so gear slack / stick-slip at the start does not matter and it needs no
         # primed melt zone. rise: tau from the build-up (the method before v0.9.8)
@@ -1518,6 +1518,14 @@ class OznLabSensor:
                              "OZNLAB_CALIBRATE_PA [FILAMENT=PLA] [TEMP=215] [SPEEDS=3] [DURATION=1.5] [SAMPLES=1] "
                              "[DISCARD=1] [PRIME=12] [RETRIES=2] [SCALE=] [APPLY=1] [METHOD=auto|decay|fast|rise] "
                              "[FILE=]  (FILAMENT = OZNLAB_FILAMENT first, TEMP = heat and wait first)")
+    def _set_pa(self, value):
+        """pressure advance, without the two console lines SET_PRESSURE_ADVANCE prints"""
+        try:
+            es = self.printer.lookup_object('toolhead').get_extruder().extruder_stepper
+            es._set_pressure_advance(value, es.pressure_advance_smooth_time)
+        except Exception:
+            self.gcode.run_script_from_command("SET_PRESSURE_ADVANCE ADVANCE=%.5f" % value)
+
     def cmd_CALIBRATE_PA(self, gcmd):
         toolhead = self.printer.lookup_object('toolhead')
         self._free(gcmd, "pa")
@@ -1533,8 +1541,8 @@ class OznLabSensor:
         scale_auto, scale_src, scale_known = self._pa_scale_for()
         scale = self._gf(gcmd, 'SCALE', scale_auto, above=0.005, maxval=3.)
         if gcmd.get('SCALE', None) is None and not scale_known:
-            j = self._job
-            if not (j is not None and j.get('warned') == self.filament):   # FILAMENT said it already
+            if getattr(self, '_scale_warned', None) != self.filament:    # FILAMENT said it already
+                self._scale_warned = self.filament
                 gcmd.respond_info(self._scale_warning())
         apply = gcmd.get_int('APPLY', 1)
         method = gcmd.get('METHOD', self.pa_method).lower()
@@ -1573,7 +1581,8 @@ class OznLabSensor:
         try:
           # inside the try: if any of these three lines fails the finally still restores PA / state
           self._end_crash_test("OZNLAB_CALIBRATE_PA")
-          self.gcode.run_script_from_command("SAVE_GCODE_STATE NAME=oznlab_pa\nM83\nM220 S100\nM221 S100\nSET_PRESSURE_ADVANCE ADVANCE=0")
+          self.gcode.run_script_from_command("SAVE_GCODE_STATE NAME=oznlab_pa\nM83\nM220 S100\nM221 S100")
+          self._set_pa(0.)
           for attempt in range(retries + 1):
             # The melt zone empties while the hotend sits hot (ooze). Measuring on an empty melt
             # zone gives a creeping rise and a tau 2-3x too high, so every attempt refills it first
@@ -1586,7 +1595,21 @@ class OznLabSensor:
             if prime > 0.:
                 toolhead.wait_moves(); toolhead.dwell(1.0); toolhead.wait_moves()
             for v in speeds:
-                for i in range(samples + discard):
+                # bursts until the last two readings agree within 15 %: the first ones measure the
+                # plastic that sat in the hotend while it heated, and only the hotend knows how
+                # much of that there is. Up to 3 bursts more than asked.
+                def kept(v=v):
+                    lst = results if method != 'auto' else (res_d if len(res_d) >= len(res_f) else res_f)
+                    return [r[2] for r in lst if r[0] == v]
+                for i in range(samples + discard + 3):
+                      if i >= samples + discard:
+                          k = kept()
+                          if len(k) >= 2 and abs(k[-1] - k[-2]) <= 0.15 * max(k[-1], k[-2]):
+                              break
+                          if i == samples + discard:
+                              self._detail(gcmd, "oznlab pa: %s, one more burst" % (
+                                  "readings still moving (%s)" % ", ".join("%.3f" % t for t in k)
+                                  if len(k) >= 2 else "one reading so far, a second one must agree"))
                       run += 1
                       toolhead.wait_moves(); toolhead.dwell(0.6); toolhead.wait_moves()   # pressure bleed-off
                       self.reactor.pause(self.reactor.monotonic() + 0.3)  # previous client drops out
@@ -1690,8 +1713,8 @@ class OznLabSensor:
             self._release_tap()
             if fh is not None: fh.close()
             try:
-                self.gcode.run_script_from_command("SET_PRESSURE_ADVANCE ADVANCE=%.5f\n"
-                                                   "RESTORE_GCODE_STATE NAME=oznlab_pa" % pa_old)
+                self._set_pa(pa_old)
+                self.gcode.run_script_from_command("RESTORE_GCODE_STATE NAME=oznlab_pa")
             except Exception:
                 logging.exception("oznlab pa: could not restore pressure advance / gcode state")
         if method == 'auto':
@@ -1718,8 +1741,16 @@ class OznLabSensor:
                               "clog/runout watch has no reference for this print"
                               % (self._why_summary(why_all), pa_old))
             return
-        taus = sorted(r[2] for r in results)
-        tau = taus[len(taus) // 2]
+        seq = [r[2] for r in results]                  # in the order measured
+        if len(seq) >= 2 and abs(seq[-1] - seq[-2]) <= 0.15 * max(seq[-1], seq[-2]):
+            tau = 0.5 * (seq[-1] + seq[-2])            # the settled pair, not the plastic that sat
+        else:
+            taus = sorted(seq)
+            tau = taus[len(taus) // 2]
+            if len(seq) >= 2:
+                gcmd.respond_info("OznLab PA: the readings did not settle (tau %s s), using the middle one. "
+                                  "Run it again after a few seconds of extrusion"
+                                  % ", ".join("%.3f" % t for t in seq))
         pa_new = tau * scale
         # reference for the print monitor: pressure amplitude at the calibration speed, P ~ v^n
         v_ref = min(r[0] for r in results)          # only the runs that survived the reliability check
@@ -1740,7 +1771,7 @@ class OznLabSensor:
         if self._mon is not None: self._mon_reload()
         self._detail(gcmd, "oznlab pa: tau %.4f s x scale %.3f -> %.4f (was %.4f)" % (tau, scale, pa_new, pa_old))
         if apply:
-            self.gcode.run_script_from_command("SET_PRESSURE_ADVANCE ADVANCE=%.5f" % pa_new)
+            self._set_pa(pa_new)
             gcmd.respond_info("OznLab PA: pressure advance %.4f set (was %.4f)" % (pa_new, pa_old))
             self.last_pa = pa_new
             self._job_note('pa', "%.4f (tau %.3f s x pa_scale %.3f%s)"
@@ -1833,8 +1864,8 @@ class OznLabSensor:
         else:
             msg = "OznLab filament: %s%s - %s" % (self._fil_disp(), origin,
                                                      self._scale_warning().replace("OznLab PA: ", ""))
-        if self._job is not None and not known:
-            self._job['warned'] = self.filament
+        if not known:
+            self._scale_warned = self.filament             # PA does not say it again for this filament
         gcmd.respond_info(msg)
 
     cmd_PA_SCALE_help = ("One-time setup per filament: OZNLAB_PA_SCALE PATTERN_PA=<best PA from a pattern test> "
@@ -1854,15 +1885,15 @@ class OznLabSensor:
             # the scale is used by every print from now on: three measurements, and they must agree
             self.cmd_CALIBRATE_PA(self.gcode.create_gcode_command(
                 "OZNLAB_CALIBRATE_PA", "OZNLAB_CALIBRATE_PA",
-                {'APPLY': 0, 'SENSOR': self.name, 'SAMPLES': gcmd.get_int('SAMPLES', 3, minval=1, maxval=5)}))
+                {'APPLY': 0, 'SENSOR': self.name, 'SAMPLES': gcmd.get_int('SAMPLES', 2, minval=1, maxval=5)}))
             if self.pa_cal is None:
                 raise gcmd.error("oznlab: no reliable tau just now - nothing stored. Check the message above, "
                                  "prime the nozzle and run OZNLAB_PA_SCALE again")
-            taus = sorted(r[2] for r in self.pa_cal['results'])
-            if len(taus) >= 2 and taus[-1] > 1.35 * taus[0]:
-                raise gcmd.error("oznlab: the measurements disagree (tau %s s), the melt zone was not steady - "
-                                 "nothing stored. Extrude a few mm, wait 10 s, run OZNLAB_PA_SCALE again"
-                                 % ", ".join("%.3f" % t for t in taus))
+            seq = [r[2] for r in self.pa_cal['results']]
+            if len(seq) < 2 or abs(seq[-1] - seq[-2]) > 0.15 * max(seq[-1], seq[-2]):
+                raise gcmd.error("oznlab: the readings did not settle (tau %s s) - nothing stored. Extrude "
+                                 "a few mm, wait 10 s, run OZNLAB_PA_SCALE again"
+                                 % ", ".join("%.3f" % t for t in seq))
         key = self.filament
         scale = round(pattern / self.pa_cal['tau'], 4)      # checked as it will be saved
         if not 0.005 < scale <= 3.0:                # must stay inside the range the config accepts at boot

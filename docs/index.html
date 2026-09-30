@@ -589,7 +589,7 @@ OznLab PA: measured ... (tau ... s, ...) - not applied
 </ol>
 <div class="cb"><pre><code>OZNLAB_PA_SCALE PATTERN_PA=&lt;your_pa&gt; TYPE=&lt;filament&gt; TEMP=&lt;same temperature&gt;
 SAVE_CONFIG</code></pre></div>
-<p>With the same filament still loaded: it heats to <code>TEMP</code>, measures the pressure again right then and divides your value by that measurement. The measurement moves a little with the state of the melt zone, so the scale is always taken from a fresh one, never from an earlier step. Use the filament type as the slicer names it, for example <code>TYPE=PLA</code> or <code>TYPE=ASA</code>. Each filament type gets its own scale (<code>pa_scale_pla</code>, <code>pa_scale_asa</code> ...). Repeat this step once for every filament type you print.</p>
+<p>With the same filament still loaded: it heats to <code>TEMP</code>, pushes out the plastic that sat in the hotend (20 mm), measures the pressure until two readings in a row agree, and divides your value by that. It refuses to store anything when the readings do not settle; then extrude a few mm and run it again. Use the filament type as the slicer names it, for example <code>TYPE=PLA</code> or <code>TYPE=ASA</code>. Each filament type gets its own scale (<code>pa_scale_pla</code>, <code>pa_scale_asa</code> ...). Repeat this step once for every filament type you print.</p>
 <p class="lbl ok">You should see</p>
 <pre class="out">OznLab PA: measured ... (tau ... s, ...) - not applied
 OznLab: pa_scale_asa ... (= ... / tau ..., pa_method ...), for ASA - SAVE_CONFIG to keep it</pre>

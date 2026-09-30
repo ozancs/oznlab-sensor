@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.10.1
+
+- PA measurements go on until two readings in a row agree within 15 % (up to three bursts more than asked), and the settled pair is the result. The plastic that sat in the hotend while it heated flows differently, and only the hotend knows how much of it there is; before, one burst on that plastic could be the result. The prime before the first burst is 20 mm (was 12). `OZNLAB_PA_SCALE` refuses to store a scale from readings that did not settle
+- Pressure advance is set without the two `pressure_advance:` lines Klipper prints, and the "no pa_scale for this filament yet" warning comes once per filament, not from every command
+
 ## v0.10.0
 
 Less to know, less to type. The module measures what it needs and keeps it.
