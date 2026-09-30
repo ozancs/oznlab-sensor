@@ -2,6 +2,8 @@
 
 ## v0.10.1
 
+- `pa_x` / `pa_y` outside the bed (a value copied from an example) are pulled to the nearest edge with a note, instead of the print failing with "Move out of range"; the example values are 245, 245 so they fit a 250 mm bed as they are
+
 - PA measurements go on until two readings in a row agree within 15 % (up to three bursts more than asked), and the settled pair is the result. The plastic that sat in the hotend while it heated flows differently, and only the hotend knows how much of it there is; before, one burst on that plastic could be the result. The prime before the first burst is 20 mm (was 12). `OZNLAB_PA_SCALE` refuses to store a scale from readings that did not settle
 - Pressure advance is set without the two `pressure_advance:` lines Klipper prints, and the "no pa_scale for this filament yet" warning comes once per filament, not from every command
 

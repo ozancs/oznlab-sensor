@@ -3676,6 +3676,13 @@ class OznLabSensor:
             px = self._gf(gcmd, 'PA_X', self.ps_pa_x if self.ps_pa_x is not None else min(x0 + 15., x1))
             py = self._gf(gcmd, 'PA_Y', self.ps_pa_y if self.ps_pa_y is not None else min(y0 + 15., y1))
             pz = self._gf(gcmd, 'PA_Z', min(self.ps_pa_z, z1 - 1.), above=0.5)
+            # a spot outside the printable area (a value copied from an example) is pulled to the
+            # nearest edge instead of failing the print with "Move out of range"
+            cx, cy = min(max(px, x0), x1), min(max(py, y0), y1)
+            if (cx, cy) != (px, py):
+                gcmd.respond_info("OznLab print start: pa_x / pa_y %.0f, %.0f is outside the bed, using %.0f, %.0f"
+                                  % (px, py, cx, cy))
+                px, py = cx, cy
             # never lower over the bed: up first, then across, then down to the PA height
             if th.get_position()[2] < pz:
                 run("G1 Z%.1f F600" % pz)
