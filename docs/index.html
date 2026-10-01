@@ -559,7 +559,7 @@ OznLab tap: z offset ... set (5 taps within ... mm) - SAVE_CONFIG to keep it</pr
 
 <section class="sub" data-title="PA measure" hidden>
 <h3>4.5 Pressure advance: measure</h3>
-<div class="need"><b>Before:</b> filament loaded, nozzle over the purge area or anywhere plastic can drop. It heats and lifts Z by itself.</div>
+<div class="need"><b>Before:</b> filament loaded, nozzle over the purge area or anywhere plastic can drop. It homes if needed, heats and lifts Z by itself.</div>
 <p class="lbl run">Run</p>
 <div class="cb"><pre><code>OZNLAB_SETUP STEP=5 FILAMENT=PLA TEMP=215</code></pre></div>
 <p><small>Your filament and its printing temperature. It extrudes a little filament in the air, about 10 s.</small></p>
@@ -568,12 +568,12 @@ OznLab tap: z offset ... set (5 taps within ... mm) - SAVE_CONFIG to keep it</pr
 OznLab PA: this hotend fits the ... method, pa_method: ... saved (SAVE_CONFIG to keep it)
 OznLab PA: measured ... (tau ... s, ...) - not applied
   ...
-  measured tau = ... s now</pre>
+  measured tau = ... s now, two readings agreed</pre>
 <p>The first measurement also picks the method that fits your hotend: <code>decay</code> for a slow pressure fall, <code>fast</code> for a hotend that drops the pressure within a few hundredths of a second. The <code>SAVE_CONFIG</code> in 4.6 keeps it.</p>
 <p class="lbl bad">If not</p>
 <div class="tw"><table class="fix">
 <tr><td><code>no pressure signal</code></td><td>No filament in the nozzle, or the nozzle is not hot.</td></tr>
-<tr><td><code>no reliable measurement</code></td><td>Run it again. Check that filament comes out while it runs.</td></tr>
+<tr><td><code>no reliable measurement</code> or <code>the readings did not settle</code></td><td>Run it again. Check that filament comes out while it runs.</td></tr>
 <tr><td><code>no reliable measurement</code> again</td><td>The reasons are in brackets in the same line. Run <code>OZNLAB_CALIBRATE_PA APPLY=0 VERBOSE=1</code> for the numbers of each run and post the output on Discord.</td></tr>
 </table></div>
 </section>
@@ -589,7 +589,7 @@ OznLab PA: measured ... (tau ... s, ...) - not applied
 </ol>
 <div class="cb"><pre><code>OZNLAB_PA_SCALE PATTERN_PA=&lt;your_pa&gt; TYPE=&lt;filament&gt; TEMP=&lt;same temperature&gt;
 SAVE_CONFIG</code></pre></div>
-<p>With the same filament still loaded: it heats to <code>TEMP</code>, pushes out the plastic that sat in the hotend (20 mm), measures the pressure until two readings in a row agree, and divides your value by that. It refuses to store anything when the readings do not settle; then extrude a few mm and run it again. Use the filament type as the slicer names it, for example <code>TYPE=PLA</code> or <code>TYPE=ASA</code>. Each filament type gets its own scale (<code>pa_scale_pla</code>, <code>pa_scale_asa</code> ...). Repeat this step once for every filament type you print.</p>
+<p>With the same filament still loaded: it homes if needed, heats to <code>TEMP</code>, pushes out the plastic that sat in the hotend (20 mm), measures the pressure until two readings in a row agree, and divides your value by that. It refuses to store anything when the readings do not settle; then extrude a few mm and run it again. Use the filament type as the slicer names it, for example <code>TYPE=PLA</code> or <code>TYPE=ASA</code>. Each filament type gets its own scale (<code>pa_scale_pla</code>, <code>pa_scale_asa</code> ...). Repeat this step once for every filament type you print.</p>
 <p class="lbl ok">You should see</p>
 <pre class="out">OznLab PA: measured ... (tau ... s, ...) - not applied
 OznLab: pa_scale_asa ... (= ... / tau ..., pa_method ...), for ASA - SAVE_CONFIG to keep it</pre>
