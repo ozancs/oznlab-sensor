@@ -72,7 +72,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.10.1"
+VERSION = "0.10.2"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -382,7 +382,7 @@ class OznLabSensor:
         # threshold = crash_um x the Hz/um measured by the last tap (re-measured every print by
         # OZNLAB_TAP in PRINT_START, so it follows the hotend temperature); crash_step is a floor
         self.crash_um = config.getfloat('crash_um', 80., above=10.)         # um of nozzle push in 15 ms
-        self.crash_step = config.getfloat('crash_step', 150., above=30.)    # Hz floor when no tap has run yet
+        self.crash_step = config.getfloat('crash_step', None, above=10.)    # Hz floor; default: from the sensor noise
         self.crash_sigma = config.getfloat('crash_sigma', 10., above=3.)    # ... and never below this x noise
         self.crash_min_z = config.getfloat('crash_min_z', 0.6, minval=0.)
         self.crash_settle = config.getfloat('crash_settle', 0.25, above=0.05)   # s of steady flow before arming
@@ -1464,16 +1464,23 @@ class OznLabSensor:
         if dec[1] < 0.93: return "noisy fall"
         return None
 
+    def _p_min(self, k=25.):
+        """the smallest pressure step (Hz) a fit may be trusted on: k x the sensor noise, never
+        below 40 Hz. Absolute thresholds (300 Hz) were sized for the reference printer's 9 Hz/um;
+        a coil that gives 1 Hz/um sees a 9x smaller step with the same 2 Hz of noise."""
+        noise = (self.last_stats or {}).get('noise') or 4.
+        return max(40., k * noise)
+
     def _fast_why(self, fa, P):
         """why a fast fit is not usable, or None"""
         if fa is None: return "no clear fast drop"
-        if abs(P) < 350.: return "pressure step too small, raise pa_speed"
+        if abs(P) < self._p_min(30.): return "pressure step too small, raise pa_speed"
         if fa[0] < 2.5 / max(self.sensor.data_rate, 1):
             # 2 samples of fall are not a time constant: a fit like that read 0.020 s on a hotend
             # whose real tau was 0.060 and set a pa_scale three times too large
             return "the fall is too short to measure (%.0f ms, under 3 samples)" % (1000. * fa[0])
         if not 0.25 <= fa[1] <= 1.05: return "no clear fast drop"
-        if fa[2] > 0.08 * abs(P) + 30.: return "noisy fall"
+        if fa[2] > 0.08 * abs(P) + 3. * ((self.last_stats or {}).get('noise') or 4.): return "noisy fall"
         return None
 
     @staticmethod
@@ -1496,8 +1503,9 @@ class OznLabSensor:
         if len(base) < 10 or len(plat) < 10:
             raise self.gcode.error("oznlab pa: not enough samples (base %d, plateau %d)" % (len(base), len(plat)))
         fb = sum(base) / len(base); P = sum(plat) / len(plat) - fb
-        if abs(P) < 300.:
-            raise self.gcode.error("oznlab pa: no pressure signal (%.0f Hz) - filament loaded? hotend hot?" % P)
+        if abs(P) < self._p_min():
+            raise self.gcode.error("oznlab pa: no pressure signal (%.0f Hz, needs %.0f) - filament loaded? "
+                                   "hotend hot?" % (P, self._p_min()))
         fit = self._fit_rise([(t - t0, f - fb) for t, f in rec if t0 - 0.02 <= t <= t1 - 0.02])
         if fit is None: return P, None, None, None, None, None
         tau_r, td, A, B, rms = fit
@@ -1689,7 +1697,7 @@ class OznLabSensor:
                       tag = "(priming, ignored)" if i < discard else ""
                       # creep is Hz/s, so compare it over the actual measurement window
                       bad = (tau_r > self.pa_tau_max or abs(B) * secs > 0.20 * abs(A)
-                             or rms > 0.06 * abs(A) + 40.)
+                             or rms > 0.06 * abs(A) + 4. * ((self.last_stats or {}).get('noise') or 4.))
                       if bad and i >= discard:
                           if abs(B) * secs > 0.20 * abs(A) and B * A < 0:
                               tag = ("(UNRELIABLE - the rise overshoots and falls back, jerky extruder start? "
@@ -2446,7 +2454,7 @@ class OznLabSensor:
             toolhead.wait_moves(); toolhead.dwell(1.0)
             # reference pass without any retraction: how much the pressure falls on its own
             pk0, af0 = self._retract_probe(toolhead, v, secs, 0., rspeed)
-            if abs(pk0) < 200.:
+            if abs(pk0) < self._p_min(20.):
                 raise gcmd.error("oznlab: no pressure signal (%.0f Hz) - is filament loaded and hot?" % abs(pk0))
             decay0 = af0 / pk0
             if decay0 < 0.05:
@@ -2745,7 +2753,7 @@ class OznLabSensor:
                 gcmd.respond_info("OznLab crash test: already running (OZNLAB_CRASH OFF=1 stops it)"); return
             gcmd.respond_info("OznLab crash watch: already on (OFF=1 first)"); return
         um = self._gf(gcmd, 'UM', self.crash_um, above=10., maxval=2000.)
-        floor = self._gf(gcmd, 'STEP', self.crash_step, above=30.)
+        floor = self._gf(gcmd, 'STEP', self.crash_step if self.crash_step is not None else self._p_min(15.), above=10.)
         step_fixed = self._gf(gcmd, 'HZ', None, above=30.)             # HZ= pins the threshold in Hz
         script = gcmd.get('GCODE', self.crash_gcode)
         test = gcmd.get_int('TEST', 0)
@@ -3692,9 +3700,12 @@ class OznLabSensor:
             run("SAVE_GCODE_STATE NAME=oznlab_ps\nM83\nG1 E-4 F1800\nRESTORE_GCODE_STATE NAME=oznlab_ps")
 
         if extruder is not None:
-            # the clean routine: warm tip, brush, tap, then hot for the PA
+            # the clean routine: warm tip, brush, tap, then hot for the PA. A nozzle already held
+            # warm by the macro (140-180 C) is used as it is, no cooling down to 150 first
             if do_tap:
-                run("M109 S%.0f" % self.WORK_TEMP)
+                hs = th.get_extruder().get_heater().get_status(self.reactor.monotonic())
+                t_now = hs.get('target') or 0.
+                run("M109 S%.0f" % (t_now if 140. <= t_now <= 180. else self.WORK_TEMP))
                 if brush:
                     run(brush)
                 tap(self.WORK_TEMP)
