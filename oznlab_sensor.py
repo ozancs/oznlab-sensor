@@ -1884,7 +1884,7 @@ class OznLabSensor:
     # temperature, with this filament. Same idea as the pulse-into-the-chute calibrations of other
     # printers with a nozzle pressure sensor.
     cmd_PA_AUTO_help = ("Pressure advance from the melt pressure alone, no pattern test: OZNLAB_PA_AUTO [TEMP=] [FILAMENT=] "
-                        "[FAST=3] [SLOW=0.75] [LOOPS=6] [MAX=0.08] [APPLY=1]")
+                        "[FAST=3] [SLOW=0.75] [LOOPS=6] [MAX=0.08] [APPLY=1] [FILE=~/printer_data/config/pa_auto.csv]")
     def cmd_PA_AUTO(self, gcmd):
         toolhead = self.printer.lookup_object('toolhead')
         self._free(gcmd, "pa auto")
@@ -1906,8 +1906,14 @@ class OznLabSensor:
         dv = fast - slow
         pa_old = st.get('pressure_advance', 0.)
         e_max = getattr(extruder, 'max_e_dist', None) or 50.
-        results = []        # (K, mismatch)
+        results = []        # (K, mismatch, undershoot, depth)
         applied = False
+        fname = gcmd.get('FILE', None); fh = None
+        if fname:
+            try:
+                fh = open(self._csv_path(fname), 'w'); fh.write("K,time,frequency\n")
+            except OSError as e:
+                raise gcmd.error("oznlab pa auto: cannot write %s (%s)" % (fname, e))
         try:
             self._end_crash_test("OZNLAB_PA_AUTO")
             if self._set_rate(self.RATE_PA, wait=0.5) != self.RATE_PA:
@@ -1957,9 +1963,27 @@ class OznLabSensor:
                 v = [f for t, f in rec if a <= t <= b]
                 return (sum(v) / len(v)) if len(v) >= 3 else None
 
+            def zero(pts):
+                """K where a line through the (K, mismatch) points crosses zero, or None"""
+                n = len(pts); sx = sum(k for k, _ in pts); sy = sum(m for _, m in pts)
+                sxx = sum(k * k for k, _ in pts); sxy = sum(k * m for k, m in pts)
+                den = n * sxx - sx * sx
+                if den <= 0.: return None
+                b = (n * sxy - sx * sy) / den; a = (sy - b * sx) / n
+                return (-a / b) if b < 0. else None
+
+            def smooth5(rec, a, b):
+                """5-sample running means of the samples in [a, b] (12 ms at 400/s: a single
+                noisy sample must not count as an undershoot)"""
+                v = [f for t, f in rec if a <= t <= b]
+                return [sum(v[i:i + 5]) / 5. for i in range(len(v) - 4)]
+
             def score(K):
                 ups, downs, rec = pulse_train(K)
-                m_up = []; m_dn = []; amps = []
+                if fh is not None:
+                    fh.write("# K %.5f ups %s downs %s\n" % (K, " ".join("%.4f" % t for t in ups), " ".join("%.4f" % t for t in downs)))
+                    for t, f in rec: fh.write("%.5f,%.4f,%.2f\n" % (K, t, f))
+                m_up = []; m_dn = []; amps = []; under = []; over = []
                 for i in range(1, len(ups)):            # loop 0 warms the pattern up, not counted
                     tu, td = ups[i], downs[i]
                     # early: the 90 ms right after the charge window (a 30 ms hotend's lag is over
@@ -1972,61 +1996,65 @@ class OznLabSensor:
                     m_up.append((early_u - late_u) / amp)   # < 0: pressure late (K small)
                     m_dn.append((early_d - late_d) / amp)   # > 0: pressure late (K small)
                     amps.append(amp)
-                if len(amps) < 2:
+                    # the decisive sign: after the speed drop, does the pressure dip below the level
+                    # it settles at (too much pulled back), and after the rise, does it shoot over?
+                    sd = smooth5(rec, td + h + 0.005, td + h + 0.30); su = smooth5(rec, tu + h + 0.005, tu + h + 0.30)
+                    if sd: under.append(min((f - late_d) / amp for f in sd))
+                    if su: over.append(max((f - late_u) / amp for f in su))
+                if len(amps) < 2 or not under:
                     raise gcmd.error("oznlab pa auto: no usable pressure step (%d of %d loops) - filament loaded? hotend hot?"
                                      % (len(amps), loops - 1))
                 up = sum(m_up) / len(m_up); dn = sum(m_dn) / len(m_dn)
                 mis = 0.5 * (dn - up)                       # > 0: K too small, < 0: K too large
-                self._detail(gcmd, "oznlab pa auto: K %.4f  mismatch %+.3f  (up %+.3f, down %+.3f, step %.0f Hz, %d loops)"
-                             % (K, mis, up, dn, sum(amps) / len(amps), len(amps)))
-                gcmd.respond_info("OznLab PA auto: K %.4f -> mismatch %+.3f%s" % (
-                    K, mis, " (pressure late, K too small)" if mis > 0.02 else
-                    " (overshoot, K too large)" if mis < -0.02 else " (square)"))
-                results.append((K, mis))
-                return mis
+                amp_m = sum(amps) / len(amps)
+                u = sorted(under)[len(under) // 2]; o = sorted(over)[len(over) // 2] if over else 0.
+                # a dip counts when it is clearly below the noise of a 5-sample mean
+                thr = max(0.03, 3. * getattr(self, '_pa_noise', 0.) / math.sqrt(5.) / abs(amp_m))
+                depth = max(0., -u - thr)
+                self._detail(gcmd, "oznlab pa auto: K %.4f  undershoot %+.3f (limit %.3f)  overshoot %+.3f  mismatch %+.3f  "
+                             "(up %+.3f, down %+.3f, step %.0f Hz, %d loops)" % (K, u, -thr, o, mis, up, dn, amp_m, len(amps)))
+                gcmd.respond_info("OznLab PA auto: K %.4f -> %s (dip %+.0f%%, mismatch %+.3f)" % (
+                    K, "undershoot, too much" if depth > 0. else "no undershoot", 100. * u, mis))
+                results.append((K, mis, u, depth))
+                return depth
 
-            def zero(pts):
-                """K where the mismatch crosses zero: least-squares line through the points"""
-                n = len(pts); sx = sum(k for k, _ in pts); sy = sum(m for _, m in pts)
-                sxx = sum(k * k for k, _ in pts); sxy = sum(k * m for k, m in pts)
-                den = n * sxx - sx * sx
-                if den <= 0.: return None
-                b = (n * sxy - sx * sy) / den; a = (sy - b * sx) / n
-                if b >= 0.: return None                     # mismatch must fall with K
-                return -a / b
-
-            k_lo, k_hi = 0., k_max
-            m_lo = score(k_lo)
-            if m_lo <= 0.:
-                raise gcmd.error("oznlab pa auto: the pressure is already square with no pressure advance - "
-                                 "nothing to compensate on this hotend at this speed (try FAST= higher)")
-            m_hi = score(k_hi)
-            n_ext = 0
-            while m_hi > 0. and n_ext < 3:                  # zero crossing beyond MAX: widen (bowden)
-                k_lo, m_lo = k_hi, m_hi
-                k_hi *= 2.; n_ext += 1
-                gcmd.respond_info("OznLab PA auto: still late at K %.3f, trying %.3f" % (k_lo, k_hi))
-                m_hi = score(k_hi)
-            if m_hi > 0.:
-                raise gcmd.error("oznlab pa auto: no zero crossing up to K %.3f - check the filament path" % k_hi)
-            tol = 0.08 * m_lo                               # 8 % of the uncompensated lag counts as square
-            for i in range(3):                              # secant steps inside the bracket
-                k_new = zero([(k_lo, m_lo), (k_hi, m_hi)])
-                if k_new is None: break
-                k_new = min(max(k_new, k_lo + 0.1 * (k_hi - k_lo)), k_hi - 0.1 * (k_hi - k_lo))
-                m_new = score(k_new)
-                if m_new > 0.: k_lo, m_lo = k_new, m_new
-                else: k_hi, m_hi = k_new, m_new
-                if abs(m_new) < tol or (k_hi - k_lo) < 0.08 * k_hi: break
-            # the crossing of the final bracket: the mismatch is only linear near zero, so the
-            # far points are not used
-            k_fit = zero([(k_lo, m_lo), (k_hi, m_hi)])
-            if k_fit is None or not 0. <= k_fit <= 2.:
-                raise gcmd.error("oznlab pa auto: the readings do not line up (%s) - run it again"
-                                 % ", ".join("%.3f:%+.3f" % r for r in results))
-            self.pa_auto = dict(k=k_fit, results=results, fast=fast, slow=slow, t=self.reactor.monotonic())
-            msg = "OznLab PA auto: pressure advance %.4f (%d trains, %s)" % (
-                k_fit, len(results), ", ".join("%.3f:%+.3f" % r for r in results))
+            # The rule of the loadcell method that matched printed pattern tests: raise K until
+            # the pressure dips below its new level after a speed drop, the last K without that
+            # dip is the answer. The "mismatch zero" (square wave by area) sits higher, because
+            # it balances a slow tail of the fall with extra charge on the fast part, and prints
+            # do not want that extra.
+            k_ok, k_bad = 0., None
+            d = score(0.)
+            if d > 0.:
+                raise gcmd.error("oznlab pa auto: the pressure dips below its level with no pressure advance at all - "
+                                 "check the filament path / drive gear, or try SLOW= higher")
+            k = k_max; n_ext = 0
+            while True:
+                d = score(k)
+                if d > 0.: k_bad = k; break
+                k_ok = k
+                if n_ext >= 3:
+                    raise gcmd.error("oznlab pa auto: no undershoot up to K %.3f - check the filament path" % k)
+                k *= 2.; n_ext += 1
+                gcmd.respond_info("OznLab PA auto: no undershoot at K %.3f yet, trying %.3f" % (k_ok, k))
+            for i in range(5):                              # narrow the bracket to 10 %
+                if (k_bad - k_ok) <= 0.10 * k_bad: break
+                bad = [(kk, dd) for kk, _, _, dd in results if dd > 0.]
+                k_new = None
+                if len(bad) >= 2:                           # the dip grows with K: aim at where it starts
+                    (k1, d1), (k2, d2) = sorted(bad)[:2]
+                    if d2 > d1 and k2 > k1: k_new = k1 - d1 * (k2 - k1) / (d2 - d1)
+                lo, hi = k_ok + 0.25 * (k_bad - k_ok), k_bad - 0.25 * (k_bad - k_ok)
+                if k_new is None or not lo <= k_new <= hi: k_new = 0.5 * (k_ok + k_bad)
+                if score(k_new) > 0.: k_bad = k_new
+                else: k_ok = k_new
+            k_fit = k_ok
+            zero_pts = [(kk, mm) for kk, mm, _, _ in results]
+            k_area = zero(sorted(zero_pts, key=lambda r: abs(r[1]))[:2]) if len(zero_pts) >= 2 else None
+            msg_area = (", square-wave crossing %.4f" % k_area) if k_area and 0. < k_area < 2. else ""
+            self.pa_auto = dict(k=k_fit, k_bad=k_bad, k_area=k_area, results=results, fast=fast, slow=slow, t=self.reactor.monotonic())
+            msg = "OznLab PA auto: pressure advance %.4f (last K without undershoot, next %.4f dips; %d trains%s)" % (
+                k_fit, k_bad, len(results), msg_area)
             if apply:
                 self._set_pa(k_fit); self.last_pa = k_fit; applied = True
                 msg += " - set (was %.4f)" % pa_old
@@ -2036,6 +2064,7 @@ class OznLabSensor:
             gcmd.respond_info(msg)
         finally:
             self._release_tap()
+            if fh is not None: fh.close()
             try:
                 if not applied: self._set_pa(pa_old)
                 self.gcode.run_script_from_command("RESTORE_GCODE_STATE NAME=oznlab_paa")
