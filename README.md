@@ -63,6 +63,18 @@ primary_branch: main
 managed_services: klipper
 ```
 
+## Uninstall
+
+```
+cd ~/oznlab-sensor
+./uninstall.sh
+```
+
+Removes the link in Klipper and the update manager entry. Then delete the
+`[oznlab_sensor hotend]` section from printer.cfg (and the oznlab lines under
+SAVE_CONFIG at the end of the file), take the `OZNLAB_` lines out of your
+PRINT_START / PRINT_END, restart Klipper, and `rm -rf ~/oznlab-sensor`.
+
 ## License
 
 GNU GPLv3, see `LICENSE`.

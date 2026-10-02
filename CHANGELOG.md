@@ -1,12 +1,16 @@
 # Changelog
 
+## v0.10.4
+
+- New, experimental: `OZNLAB_PA_AUTO [TEMP=] [FILAMENT=] [APPLY=1] [FILE=]` finds the pressure advance from the melt pressure alone, no pattern test and no pa_scale. The extruder pulses slow and fast in the air; for each candidate K the charge Klipper's PA would add is put in with plain extrude-only moves. The rule, taken from the loadcell method that matched printed pattern tests: raise K until the pressure dips below its new level after a speed drop, the last K without that dip is the answer. About 2 minutes, 70-100 mm of filament. `FILE=` writes the raw samples. Not in PRINT_START yet
+- `uninstall.sh`: removes the link in Klipper and the update manager entry, says what to delete from printer.cfg. Guide and README have an Uninstall section
+
 ## v0.10.3
 
 - The PA bursts run at 400 samples/s again, everything else stays at 100. A fast hotend's pressure fall is 20-30 ms: 2-3 samples at 100/s, which the 3-sample rule of v0.10.0 rejected or read wrong, so `OZNLAB_PA_SCALE` ended with "the readings did not settle" on such a hotend. At 400/s the same fall is 8-12 samples. The rate switches only while nothing else is streaming (clog/runout monitor, crash watch), and goes back to 100 when the bursts are done. The "noisy fall" test of a burst uses the noise of that burst's own baseline, measured at the rate it ran at
 - The sensor stream stays up for the whole PA calibration instead of restarting for every burst. Klipper builds the sample clock from scratch at every start, and a few ms of timing error on a 30 ms fall is a wrong tau
 - The fast fit allows a dead time between the extruder stop and the start of the fall (the filament relaxes first); pinned at the stop it read that delay as a shorter tau, 15 % off with 8 ms of delay in the test. A fine pass after the grid brings the step quantisation from 9 % under 2 %
 - The decay fit weights its points: the end of the fall is far noisier in the log fit than its start and steered the slope on printers with a small pressure step
-- New, experimental: `OZNLAB_PA_AUTO [TEMP=] [FILAMENT=] [APPLY=1]` finds the pressure advance from the melt pressure alone, no pattern test and no pa_scale. The extruder pulses slow and fast in the air; for each candidate K the charge Klipper's PA would add is put in with plain extrude-only moves, and the K that makes the pressure a square wave is the result. About a minute, 70 mm of filament. Not in PRINT_START yet
 - `OZNLAB_PA_SCALE` and setup step 5 home first when the printer is not homed (the nozzle was not lifted before, and extruded where it stood), and step 5 asks for two readings that agree like `OZNLAB_PA_SCALE` does instead of taking one
 - When an attempt gives no usable reading, the retry line says why ("the fall is too short to measure x6") instead of "melt zone not settled" for every reason; the reasons are grouped without their per-burst numbers
 - The "no pa_scale for this filament yet" warning is not shown by the two commands that are making that scale

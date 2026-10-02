@@ -921,6 +921,13 @@ retry_tolerance: 0.01</code></pre></div>
 <tr><td><code>OZNLAB_STREAM DURATION= FILE=</code></td><td>Raw samples to a CSV file.</td></tr>
 </table></div>
 
+<h3>Uninstall</h3>
+<p>The reverse of step 3.1. It removes the link in Klipper and the update manager entry, and leaves your config to you.</p>
+<p class="lbl run">Run (SSH)</p>
+<div class="cb"><pre><code>cd ~/oznlab-sensor
+./uninstall.sh</code></pre></div>
+<p>Then in <code>printer.cfg</code>: delete the <code>[oznlab_sensor hotend]</code> section and the <code>oznlab_sensor</code> lines under <code>SAVE_CONFIG</code> at the end of the file, take the <code>OZNLAB_</code> lines out of PRINT_START and PRINT_END (put your old nozzle heating line back), restart Klipper. The folder can go: <code>rm -rf ~/oznlab-sensor</code>. The coil and the board can stay wired, they do nothing without the section.</p>
+
 <h3>Troubleshooting</h3>
 <p>Every step above has its own <b>If not</b> list. These are the common ones in one place.</p>
 <div class="tw"><table>
