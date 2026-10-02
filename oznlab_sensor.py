@@ -73,7 +73,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.10.4"
+VERSION = "0.10.5"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -1552,8 +1552,58 @@ class OznLabSensor:
         """let Klipper's other timers run during a long fit (heaters, MCU traffic)"""
         self.reactor.pause(self.reactor.monotonic())
 
+    @staticmethod
+    def _timing_ok(rec, sps, a=None, b=None):
+        """samples evenly spaced at the sensor rate in [a, b]: None if fine, else why not"""
+        ts = [t for t, f in rec if (a is None or t >= a) and (b is None or t <= b)]
+        if len(ts) < 10: return "no samples"
+        d = sorted(y - x for x, y in zip(ts, ts[1:]))
+        if d[0] <= 0.: return "time stamps out of order"
+        med = d[len(d) // 2]
+        if not 0.6 / sps <= med <= 1.6 / sps: return "samples %.1f ms apart, expected %.1f" % (1000. * med, 1000. / sps)
+        if d[-1] > max(0.03, 8. / sps): return "a %.0f ms gap in the samples" % (1000. * d[-1])
+        if b is not None and a is not None and len(ts) < 0.7 * sps * (b - a): return "too few samples"
+        return None
+
+    def _pa_stream(self, gcmd, sess, what):
+        """start the PA sensor stream and wait until its time stamps are sound. Right after a
+        G28 the first stream at 400/s once came with samples a second apart and gaps for 20 s
+        (a whole measurement wasted, and read as a 74 % pressure dip). Restarted up to twice."""
+        mcu = self.sensor.i2c.get_mcu()
+        sps = float(self.sensor.data_rate)
+        why = None
+        for attempt in range(3):
+            if attempt:
+                self._tap = None                        # client drops out, the stream stops
+                bb = getattr(self.sensor, 'batch_bulk', None)
+                end = self.reactor.monotonic() + 2.
+                while getattr(bb, 'is_started', False) and self.reactor.monotonic() < end:
+                    self.reactor.pause(self.reactor.monotonic() + 0.1)
+                self._detail(gcmd, "oznlab %s: sensor timing not settled (%s), restarting the stream" % (what, why))
+            probe = []; sess['probe'] = probe; self._tap = sess
+            self._client('pa', self._pa_client(sess))
+            t_start = self.reactor.monotonic()
+            while self.reactor.monotonic() < t_start + 8.:
+                self.reactor.pause(self.reactor.monotonic() + 0.5)
+                if self.reactor.monotonic() < t_start + 1.5 or not probe: continue
+                last = probe[-1][0]
+                why = self._timing_ok(probe, sps, last - 1.0, last)
+                if why is None:
+                    lag = mcu.estimated_print_time(self.reactor.monotonic()) - last
+                    if lag > 2.5: why = "samples %.1f s behind" % lag
+                if why is None:
+                    sess['probe'] = None
+                    return
+                if len(probe) > 20000: del probe[:-5000]
+        sess['probe'] = None
+        raise gcmd.error("oznlab %s: the sensor's sample timing did not settle (%s) - run it again, "
+                         "if it repeats send klippy.log" % (what, why))
+
     def _pa_analyze(self, rec, t0, t1):
         """rec: (t, f) samples; t0/t1: print time of extruder speed step up / down"""
+        bad = self._timing_ok(rec, float(self.sensor.data_rate), t0 - 0.45, t1 + 2.0)
+        if bad:
+            raise self.gcode.error("oznlab pa: sample timing broken (%s)" % bad)
         base = [f for t, f in rec if t0 - 0.45 <= t <= t0 - 0.05]
         plat = [f for t, f in rec if t1 - 0.30 <= t <= t1 - 0.02]
         if len(base) < 10 or len(plat) < 10:
@@ -1583,9 +1633,13 @@ class OznLabSensor:
         def cb(msg):
             if self._tap is not rec: return False
             out = rec.get('rec') if isinstance(rec, dict) else rec
+            if isinstance(rec, dict) and rec.get('probe') is not None:
+                out = rec['probe']
             if out is None: return True
             for t, f, z in msg.get('data', ()):
-                if f > 0.: out.append((t, f))
+                # a single sample tens of MHz off is a chip status word, not a frequency
+                if f > 0. and (not out or abs(f - out[-1][1]) < 200000.):
+                    out.append((t, f))
             return True
         return cb
 
@@ -1663,9 +1717,9 @@ class OznLabSensor:
                            % self.sensor.data_rate)
           self.gcode.run_script_from_command("SAVE_GCODE_STATE NAME=oznlab_pa\nM83\nM220 S100\nM221 S100")
           self._set_pa(0.)
-          sess = {'rec': None}; self._tap = sess
-          self._client('pa', self._pa_client(sess))
-          t_stream = self.reactor.monotonic()
+          sess = {'rec': None}
+          self._pa_stream(gcmd, sess, "pa")
+          t_stream = self.reactor.monotonic() - 2.5
           for attempt in range(retries + 1):
             n_why = len(why_all)
             # The melt zone empties while the hotend sits hot (ooze). Measuring on an empty melt
@@ -1921,9 +1975,9 @@ class OznLabSensor:
                              % self.sensor.data_rate)
             self.gcode.run_script_from_command("SAVE_GCODE_STATE NAME=oznlab_paa\nM83\nM220 S100\nM221 S100")
             self._set_pa(0.)                            # Klipper's own PA must not add to ours
-            sess = {'rec': None}; self._tap = sess
-            self._client('pa', self._pa_client(sess))
-            t_stream = self.reactor.monotonic()
+            sess = {'rec': None}
+            self._pa_stream(gcmd, sess, "pa auto")
+            t_stream = self.reactor.monotonic() - 2.5
             p_now = self.pa_prime
             while p_now > 0.:
                 piece = min(p_now, e_max * 0.9)
@@ -1984,8 +2038,11 @@ class OznLabSensor:
                     fh.write("# K %.5f ups %s downs %s\n" % (K, " ".join("%.4f" % t for t in ups), " ".join("%.4f" % t for t in downs)))
                     for t, f in rec: fh.write("%.5f,%.4f,%.2f\n" % (K, t, f))
                 m_up = []; m_dn = []; amps = []; under = []; over = []
+                sps = float(self.sensor.data_rate)
                 for i in range(1, len(ups)):            # loop 0 warms the pattern up, not counted
                     tu, td = ups[i], downs[i]
+                    if self._timing_ok(rec, sps, tu - 0.3, td + t_slow - h - 0.05):
+                        continue
                     # early: the 90 ms right after the charge window (a 30 ms hotend's lag is over
                     # by 0.1 s, a longer window would dilute it); late: the settled plateau
                     early_u = mean(rec, tu + h + 0.01, tu + h + 0.10); late_u = mean(rec, tu + 0.35, td - h - 0.02)
@@ -2025,6 +2082,11 @@ class OznLabSensor:
             # do not want that extra.
             k_ok, k_bad = 0., None
             d = score(0.)
+            if d > 0.:
+                # no compensation cannot overshoot: the melt or the timing was not settled yet
+                gcmd.respond_info("OznLab PA auto: the first train looks unsettled, once more")
+                results.pop()
+                d = score(0.)
             if d > 0.:
                 raise gcmd.error("oznlab pa auto: the pressure dips below its level with no pressure advance at all - "
                                  "check the filament path / drive gear, or try SLOW= higher")

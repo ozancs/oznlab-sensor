@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.10.5
+
+- PA measurements check the sensor's sample timing before they start and on every burst. Right after a G28, the first 400/s stream once delivered samples a second apart with gaps for 20 s; `OZNLAB_PA_AUTO` read that as a 74 % pressure dip and stopped. Now the stream is restarted until the time stamps are sound, a burst or loop with broken timing is not used, and a first train that looks unsettled is run once more. Single wild samples (a chip status word read as a frequency) are dropped
+
 ## v0.10.4
 
 - New, experimental: `OZNLAB_PA_AUTO [TEMP=] [FILAMENT=] [APPLY=1] [FILE=]` finds the pressure advance from the melt pressure alone, no pattern test and no pa_scale. The extruder pulses slow and fast in the air; for each candidate K the charge Klipper's PA would add is put in with plain extrude-only moves. The rule, taken from the loadcell method that matched printed pattern tests: raise K until the pressure dips below its new level after a speed drop, the last K without that dip is the answer. About 2 minutes, 70-100 mm of filament. `FILE=` writes the raw samples. Not in PRINT_START yet
