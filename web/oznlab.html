@@ -1,0 +1,1553 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OznLab Sensor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;700;800&family=Overpass+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* Bench sheet: a printed instrument datasheet on a grey bench. One bold element, the plot,
+   framed like a datasheet figure; everything else quiet. Graphite, always dark: it sits next to Mainsail at the printer. */
+:root {
+  --page: #17191a;       /* the bench */
+  --sheet: #202325;      /* paper */
+  --raised: #2a2e30;     /* inputs, hover */
+  --rule: #3a3f42;
+  --text: #e8e6e0;       /* ink */
+  --dim: #9ca3a6;
+  --sig: #8ba8ff;        /* the signal: plotter blue */
+  --cmd: #e8e6e0;        /* what was commanded: ink, dashed */
+  --ok: #6fcf8a;
+  --bad: #ff7f70;
+  --warn: #e2b259;
+  --tap: #f08acb;
+  --raw: #3b4560;
+  --band: rgba(139,168,255,.09);
+  --okband: rgba(111,207,138,.12);
+  --on-ink: #17191a;
+  --term: #0f1011;
+  --term-text: #d9dcd6;
+  --font: 'Overpass', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --head: 'Overpass', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: 'Overpass Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--page); color: var(--text); font: 15px/1.5 var(--font); display: grid;
+  grid-template-rows: auto 1fr auto; grid-template-columns: 188px minmax(0, 1fr); grid-template-areas: "top top" "nav main" "con con";
+  font-variant-numeric: tabular-nums; }
+button, select, input { font: inherit; color: var(--text); }
+button { background: var(--sheet); border: 1px solid var(--rule); border-radius: 3px; padding: 6px 12px 5px; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--text); }
+button:disabled { opacity: .4; cursor: not-allowed; }
+button.primary { background: var(--text); color: var(--on-ink); border-color: var(--text); font-weight: 700; }
+button.primary:hover:not(:disabled) { background: var(--sig); border-color: var(--sig); }
+button.ghost { background: transparent; border-color: transparent; text-decoration: underline; text-decoration-color: var(--rule); text-underline-offset: 3px; }
+button.ghost:hover:not(:disabled) { border-color: transparent; text-decoration-color: var(--text); }
+button.on { color: var(--sig); text-decoration-color: var(--sig); }
+select, input[type=text], input[type=number] { background: var(--sheet); border: 1px solid var(--rule); border-radius: 3px; padding: 5px 8px 4px; }
+:focus-visible { outline: 2px solid var(--sig); outline-offset: 2px; }
+a { color: var(--sig); }
+
+/* status line */
+#top { grid-area: top; display: flex; align-items: stretch; gap: 0; padding: 0 18px; border-bottom: 2px solid var(--text); background: var(--sheet); flex-wrap: wrap; }
+#brand { font: 800 19px/1 var(--head); letter-spacing: -.01em; display: flex; align-items: center; gap: 9px; padding: 12px 22px 10px 0; }
+#brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); }
+#brand .dot.live { background: var(--ok); }
+.stat { display: flex; flex-direction: column; justify-content: center; line-height: 1.15; padding: 8px 16px 6px; border-left: 1px solid var(--rule); }
+.stat small { color: var(--dim); font-size: 12px; }
+.stat b { font: 700 15px var(--head); }
+.axes span { display: inline-block; width: 18px; text-align: center; border-radius: 2px; margin-right: 2px; font: 700 12px/18px var(--head); }
+.axes span.h { background: var(--text); color: var(--on-ink); }
+.axes span:not(.h) { box-shadow: inset 0 0 0 1.5px var(--warn); color: var(--warn); }
+#running { margin-left: auto; color: var(--sig); font: 700 14px var(--head); display: none; align-items: center; gap: 8px; padding: 0 14px; }
+#running::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--sig); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .2; } }
+#quick { align-self: center; margin-left: 12px; }
+#running[style*="flex"] + #quick { margin-left: 0; }
+@media (prefers-reduced-motion: reduce) { #running::before { animation: none; } }
+
+/* navigation */
+nav { grid-area: nav; padding: 16px 0 14px; display: flex; flex-direction: column; gap: 0; }
+nav button { text-align: left; background: transparent; border: 0; border-radius: 0; padding: 8px 18px 7px; color: var(--dim); font-weight: 600; border-left: 3px solid transparent; }
+nav button:hover:not(:disabled) { color: var(--text); }
+nav button.sel { color: var(--text); border-left-color: var(--text); }
+nav .foot { margin-top: auto; color: var(--dim); font-size: 12px; padding: 8px 18px; order: 100; }
+/* setup is done once: first in the list until it is finished, then quietly at the end */
+#navSetup { order: 99; }
+#navSetup.todo { order: -1; color: var(--text); }
+#navSetup.todo small { display: block; font-weight: 400; color: var(--warn); font-size: 12px; }
+.setupnote { display: flex; gap: 14px; align-items: center; border: 1.5px solid var(--warn); border-left-width: 6px; border-radius: 3px; padding: 10px 14px; background: var(--sheet); }
+
+main { grid-area: main; overflow: auto; padding: 18px 22px 28px 4px; display: flex; flex-direction: column; gap: 18px; min-height: 0; }
+.panel { background: var(--sheet); border: 1px solid var(--rule); border-radius: 4px; padding: 16px 18px; }
+h2 { font: 700 18px/1.25 var(--head); margin: 0 0 4px; letter-spacing: -.005em; }
+p.lead { margin: 0 0 12px; color: var(--dim); max-width: 70ch; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.grow { flex: 1; }
+.muted { color: var(--dim); }
+.ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+
+/* the plot: the one loud thing, framed like a datasheet figure */
+#scope { padding: 12px 16px 12px; border: 0; border-top: 4px solid var(--text); border-radius: 0; }
+#scope .head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+#scope h2 { font-size: 20px; font-weight: 800; white-space: nowrap; }
+#scope .head label { color: var(--dim); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+#scope canvas { width: 100%; height: 320px; display: block; border-left: 2px solid var(--text); border-bottom: 2px solid var(--text); }
+body.compact #scope canvas { height: 200px; }
+.legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--dim); margin-top: 8px; }
+.sw { display: inline-block; width: 20px; border-top: 2px solid; vertical-align: middle; margin-right: 6px; }
+.readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0; background: var(--sheet); border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
+.readouts div { padding: 10px 16px 8px; border-left: 1px solid var(--rule); margin-left: -1px; }
+.readouts small { display: block; color: var(--dim); font-size: 12px; }
+.readouts b { font: 700 21px var(--head); }
+
+/* views */
+.view { display: none; flex-direction: column; gap: 18px; }
+.view.sel { display: flex; }
+.two { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 18px; }
+@media (max-width: 1100px) { .two { grid-template-columns: minmax(0, 1fr); } }
+.form { display: grid; grid-template-columns: auto 1fr; gap: 10px 14px; align-items: center; max-width: 520px; }
+.form label { color: var(--dim); font-size: 14px; }
+.hint { font-size: 13px; color: var(--dim); }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 7px 8px 6px; border-bottom: 1px solid var(--rule); text-align: right; }
+th { color: var(--dim); font-weight: 600; font-size: 13px; border-bottom: 1.5px solid var(--text); }
+td:first-child, th:first-child { text-align: left; }
+td.l, th.l { text-align: left; }
+tr.click { cursor: pointer; } tr.click:hover td { background: var(--raised); }
+.empty { color: var(--dim); padding: 14px 0; }
+
+/* PA */
+#paResult { font: 800 56px/1 var(--head); letter-spacing: -.02em; }
+#paResult.pending { color: var(--dim); }
+#kladder { width: 100%; height: 86px; display: block; }
+#falls { width: 100%; height: 240px; display: block; }
+
+/* tests */
+.tests { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0; border-top: 1px solid var(--rule); }
+.test { padding: 14px 16px 14px 0; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--rule); }
+.test b { font: 700 16px var(--head); }
+.test p { margin: 0; color: var(--dim); font-size: 14px; flex: 1; max-width: 42ch; }
+.test .warnline { color: var(--warn); font-size: 13px; font-weight: 600; }
+.test button { align-self: flex-start; }
+
+/* health */
+.checks div { padding: 7px 0 6px; border-bottom: 1px solid var(--rule); display: flex; gap: 12px; }
+.checks i { font-style: normal; font: 700 12px/18px var(--head); padding: 0 6px; border-radius: 2px; height: fit-content; min-width: 40px; text-align: center; }
+.checks i.OK { color: var(--ok); box-shadow: inset 0 0 0 1.5px var(--ok); }
+.checks i.WARN { color: var(--warn); box-shadow: inset 0 0 0 1.5px var(--warn); }
+.checks i.FAIL { color: var(--on-ink); background: var(--bad); }
+
+/* console: a terminal strip under the sheet */
+#con { grid-area: con; background: var(--term); color: var(--term-text); }
+#con .bar { display: flex; align-items: center; gap: 10px; padding: 7px 18px 6px; }
+#con .bar b { font: 700 14px var(--head); }
+#con .hint { color: #8f979a; }
+#con button { background: transparent; color: var(--term-text); border-color: #4a5053; }
+#con button.primary { background: var(--term-text); color: var(--term); border-color: var(--term-text); }
+#conLog { height: 0; overflow: auto; font: 13px/1.55 var(--mono); padding: 0 18px; transition: height .18s ease; white-space: pre-wrap; }
+#con.open #conLog { height: 200px; }
+#conLog .c { color: #9fb4ff; }
+#conLog .e { color: #ff8b7e; }
+#conLog .o { color: #f1e6c8; font-weight: 600; }
+#conForm { display: none; padding: 6px 18px 10px; gap: 8px; }
+#con.open #conForm { display: flex; }
+#conIn { flex: 1; font-family: var(--mono); background: #23272a; border-color: #4a5053; color: var(--term-text); }
+@media (prefers-reduced-motion: reduce) { #conLog { transition: none; } }
+
+/* messages and dialog */
+#toasts { position: fixed; right: 18px; top: 64px; display: flex; flex-direction: column; gap: 8px; z-index: 20; max-width: 400px; }
+.toast { background: var(--sheet); border: 1.5px solid var(--text); border-left-width: 6px; border-radius: 3px; padding: 10px 14px 9px; box-shadow: 0 6px 18px rgba(20,24,26,.18); cursor: pointer; }
+.toast.err { border-left-color: var(--bad); } .toast.warn { border-left-color: var(--warn); } .toast.ok { border-left-color: var(--ok); }
+.toast b { display: block; font: 700 15px var(--head); }
+.toast span { color: var(--dim); font-size: 14px; }
+dialog { background: var(--sheet); color: var(--text); border: 1.5px solid var(--text); border-radius: 4px; padding: 20px 22px; max-width: 460px; }
+dialog::backdrop { background: rgba(21,24,26,.45); }
+dialog h3 { margin: 0 0 8px; font: 800 20px var(--head); }
+dialog p { color: var(--dim); margin: 0 0 16px; }
+dialog.wide { max-width: 720px; width: 92vw; }
+#repText { white-space: pre-wrap; font: 13px/1.55 var(--mono); max-height: 60vh; overflow: auto; }
+
+/* setup */
+.wiz { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 18px; }
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; position: relative; }
+.steps::before { content: ""; position: absolute; left: 16.5px; top: 18px; bottom: 18px; border-left: 1.5px solid var(--rule); }
+.steps .n { position: relative; }
+.steps button { width: 100%; text-align: left; background: transparent; border: 0; border-radius: 0; padding: 7px 4px; display: flex; gap: 12px; align-items: center; color: var(--dim); }
+.steps button:hover:not(:disabled) { color: var(--text); }
+.steps button.sel { color: var(--text); font-weight: 700; }
+.steps .n { flex: 0 0 26px; height: 26px; border-radius: 50%; border: 1.5px solid var(--rule); background: var(--sheet); display: grid; place-items: center; font: 700 13px var(--head); }
+.steps button.sel .n { border-color: var(--text); }
+.steps .done .n { background: var(--text); border-color: var(--text); color: var(--on-ink); }
+.steps .fail .n { border-color: var(--bad); color: var(--bad); }
+.steps .opt { font-size: 12px; color: var(--dim); font-weight: 400; }
+.stepcard { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 620px) { .stepcard { grid-template-columns: minmax(0, 1fr); } .stepcard svg { max-width: 150px; } }
+.stepcard svg { width: 100%; height: auto; color: var(--text); }
+.stepcard h2 { font-size: 24px; font-weight: 800; }
+.out { background: var(--raised); border-left: 3px solid var(--rule); padding: 10px 12px; font: 13px/1.55 var(--mono); white-space: pre-wrap; max-height: 260px; overflow: auto; }
+.out:empty { display: none; }
+.out .FAIL { color: var(--bad); font-weight: 600; } .out .WARN { color: var(--warn); } .out .OK { color: var(--ok); }
+.savebox { border: 1.5px solid var(--text); border-left-width: 6px; border-radius: 3px; padding: 10px 14px; background: var(--sheet); }
+.snip { position: relative; background: var(--raised); border-left: 3px solid var(--text); padding: 10px 12px; white-space: pre; overflow: auto; font: 13px/1.55 var(--mono); }
+.snip button { position: absolute; top: 6px; right: 6px; font-size: 12px; padding: 2px 8px; }
+.ticks { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.ticks li::before { content: "\2013"; color: var(--dim); display: inline-block; width: 20px; font-weight: 700; }
+.ticks li.y::before { content: "\2713"; color: var(--ok); }
+.ticks li.n::before { content: "\2715"; color: var(--bad); }
+.big { font: 800 46px/1 var(--head); }
+@media (max-width: 900px) {
+  .wiz { grid-template-columns: minmax(0, 1fr); }
+  .steps { flex-direction: row; gap: 6px; }
+  .steps::before { left: 18px; right: 18px; top: 50%; bottom: auto; border-left: 0; border-top: 1.5px solid var(--rule); }
+  .steps button { width: auto; padding: 4px; }
+  .steps button > span:not(.n) { display: none; }
+}
+
+/* filaments: an index of spools, not a card grid */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 0 28px; }
+.card { padding: 12px 0 14px; border-top: 2px solid var(--text); display: flex; flex-direction: column; gap: 6px; }
+.card h3 { margin: 0; font: 800 26px/1.1 var(--head); letter-spacing: -.01em; }
+.card dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 14px; }
+.card dt { color: var(--dim); } .card dd { margin: 0; text-align: right; }
+.card .age { font-size: 12px; color: var(--dim); } .card .age.old { color: var(--warn); font-weight: 600; }
+.banner { border-radius: 3px; padding: 12px 16px; border: 1.5px solid var(--text); border-left-width: 6px; background: var(--sheet); display: flex; gap: 14px; align-items: center; }
+.banner b { font: 700 18px var(--head); }
+.banner.ok { border-left-color: var(--ok); } .banner.warn { border-left-color: var(--warn); } .banner.bad { border-left-color: var(--bad); }
+
+@media (max-width: 760px) {
+  body { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "nav" "main" "con"; grid-template-rows: auto auto minmax(0, 1fr) auto; }
+  #top { padding: 0 12px; }
+  #brand { padding: 10px 14px 8px 0; width: 100%; }
+  .stat { padding: 6px 12px 5px; }
+  .stat:nth-of-type(1) { border-left: 0; padding-left: 0; }
+  #quick { margin: 6px 0 8px; }
+  nav { flex-direction: row; overflow-x: auto; padding: 0 6px; border-bottom: 1px solid var(--rule); background: var(--sheet); }
+  nav button { white-space: nowrap; flex: 0 0 auto; border-left: 0; border-bottom: 3px solid transparent; padding: 10px 12px 7px; }
+  nav button.sel { border-bottom-color: var(--text); }
+  nav .foot { display: none; }
+  #conLast { display: none; }
+  main { padding: 12px; }
+}
+</style>
+</head>
+<body>
+<header id="top">
+  <div id="brand"><span class="dot" id="dot"></span>OznLab Sensor</div>
+  <div class="stat"><small>Klipper</small><b id="s_klippy">connecting</b></div>
+  <div class="stat"><small>Homed</small><b class="axes" id="s_axes"><span>X</span><span>Y</span><span>Z</span></b></div>
+  <div class="stat"><small>Nozzle</small><b id="s_noz">-</b></div>
+  <div class="stat"><small>Bed</small><b id="s_bed">-</b></div>
+  <div class="stat"><small>Print</small><b id="s_print">-</b></div>
+  <div class="stat"><small>Filament / PA</small><b id="s_pa">-</b></div>
+  <div id="running"></div>
+  <button id="quick" class="ghost" title="Health check, noise and the last tap in one sentence">Is everything OK?</button>
+</header>
+
+<nav id="nav">
+  <button data-v="setup" id="navSetup">Setup</button>
+  <button data-v="live" class="sel">Live</button>
+  <button data-v="print">Print</button>
+  <button data-v="pa">Pressure advance</button>
+  <button data-v="fil">Filaments</button>
+  <button data-v="z">Z offset and tap</button>
+  <button data-v="mesh">Bed mesh</button>
+  <button data-v="tests">Tests</button>
+  <button data-v="health">Health check</button>
+  <div class="foot" id="ver">-</div>
+</nav>
+
+<main>
+  <section class="panel" id="scope">
+    <div class="head">
+      <h2 class="grow" id="scopeTitle">Sensor</h2>
+      <label>Window <select id="win"><option>2</option><option>5</option><option selected>10</option><option>30</option><option>60</option></select> s</label>
+      <label>Smooth <select id="smooth"><option value="auto" selected>auto</option><option value="0">off</option><option value="0.03">30 ms</option><option value="0.08">80 ms</option><option value="0.2">200 ms</option></select></label>
+      <label>Scale <select id="scale"><option value="auto" selected>auto</option><option value="100">100 Hz</option><option value="500">500 Hz</option><option value="2000">2 kHz</option><option value="10000">10 kHz</option></select></label>
+      <label>Unit <select id="unit"><option value="hz" selected>Hz</option><option value="um">um push</option></select></label>
+      <label>Show <select id="mode"><option value="sig" selected>signal</option><option value="fft">spectrum</option></select></label>
+      <button id="flip" class="ghost" title="Turn the trace upside down">Flip</button>
+      <button id="pause" class="ghost">Pause</button>
+      <button id="snap" class="ghost" title="Save the graph with the readings as a PNG">Save image</button>
+    </div>
+    <canvas id="live" aria-label="Live sensor signal"></canvas>
+    <div class="legend" id="legSig">
+      <span><span class="sw" style="border-color:var(--sig)"></span>signal</span>
+      <span><span class="sw" style="border-color:var(--raw)"></span>raw readings</span>
+      <span><span class="sw" style="border-color:var(--cmd);border-top-style:dashed"></span>what the extruder was told to do</span>
+      <span><span class="sw" style="border-color:var(--tap)"></span>tap contact</span>
+    </div>
+    <div class="legend" id="legFft" style="display:none"><span id="fftNote"></span></div>
+  </section>
+
+
+  <!-- SETUP -->
+  <section class="view" id="v_setup">
+    <div class="wiz">
+      <div class="panel">
+        <h2>Setup</h2>
+        <p class="hint" style="margin:0 0 10px">Eight steps, each checks itself. What a step measures is written to printer.cfg with one button.</p>
+        <ol class="steps" id="steps"></ol>
+      </div>
+      <div class="panel" id="stepPanel">
+        <div class="stepcard">
+          <div id="stepArt"></div>
+          <div>
+            <div class="hint" id="stepNo"></div>
+            <h2 id="stepTitle"></h2>
+            <p class="lead" id="stepText"></p>
+            <div id="stepExtra"></div>
+            <div class="row" style="margin:12px 0">
+              <button class="primary" id="stepRun">Run this step</button>
+              <button id="stepSkip" class="ghost">Skip</button>
+              <span class="grow"></span>
+              <button id="stepPrev" class="ghost">Back</button>
+              <button id="stepNext">Next step</button>
+            </div>
+            <div class="out" id="stepOut"></div>
+            <div id="stepPending" style="margin-top:12px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRINT -->
+  <section class="view" id="v_print">
+    <div class="panel">
+      <div class="row"><h2 class="grow">Clog and runout watch</h2>
+        <label class="hint row">Window <select id="pwin"><option value="60">1 min</option><option value="300" selected>5 min</option><option value="900">15 min</option><option value="1800">30 min</option></select></label></div>
+      <p class="hint" id="monState" style="margin:0 0 8px">The watch runs during a print, after OZNLAB_MONITOR in PRINT_START.</p>
+      <canvas id="pchart" style="width:100%;height:300px;display:block" aria-label="Measured and expected melt pressure"></canvas>
+      <div class="legend"><span><span class="sw" style="border-color:var(--sig)"></span>measured pressure</span><span><span class="sw" style="border-color:var(--cmd);border-top-style:dashed"></span>expected at this flow</span><span><span class="sw" style="border-color:var(--bad);border-top-style:dashed"></span>clog and runout limits</span><span>ticks on top: a new layer</span></div>
+    </div>
+    <div class="panel">
+      <div class="row"><h2 class="grow">Print reports</h2><span class="hint" id="repCount"></span></div>
+      <table id="reports"><thead><tr><th>Date</th><th class="l">File</th><th>Time</th><th>Filament</th><th>Z offset</th><th>PA</th><th>Watch</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- FILAMENTS -->
+  <section class="view" id="v_fil">
+    <div class="panel">
+      <h2>Filaments</h2>
+      <p class="lead">Everything measured per filament: pressure advance per nozzle, max flow, retraction and temperature. A value older than a month is marked; filament changes as it ages and takes on moisture.</p>
+      <div class="cards" id="cards"><div class="empty">Nothing measured yet.</div></div>
+    </div>
+    <div class="panel">
+      <div class="row"><h2 class="grow">Pressure advance over time</h2><select id="phFil"></select></div>
+      <p class="hint" style="margin:0 0 6px">Every PA auto run of this filament. A slow climb can be a worn nozzle; a jump after a change of spool is the spool.</p>
+      <canvas id="phist" style="width:100%;height:240px;display:block" aria-label="Pressure advance history"></canvas>
+    </div>
+  </section>
+
+  <!-- LIVE -->
+  <section class="view sel" id="v_live">
+    <div class="setupnote" id="setupNote" style="display:none"><span class="grow" id="setupNoteText"></span><button class="primary" id="setupCont">Continue the setup</button></div>
+    <div class="readouts">
+      <div><small>Coil frequency</small><b id="r_f">-</b></div>
+      <div><small>Noise / reading step</small><b id="r_n">-</b></div>
+      <div><small>Sensitivity at this temperature</small><b id="r_s">-</b></div>
+      <div><small>Pressure advance in use</small><b id="r_pa">-</b></div>
+      <div><small>Clog watch</small><b id="r_m">-</b></div>
+      <div><small>Sample rate</small><b id="r_rate">-</b></div>
+    </div>
+    <div class="panel">
+      <h2>What you are looking at</h2>
+      <p class="lead">The coil sees the hotend move by fractions of a micrometre. Push the cold nozzle up with a finger and the line jumps; during a tap it rises as the nozzle meets the bed; while extruding it follows the melt pressure. At rest it should be flat.</p>
+      <div class="row">
+        <button data-run="OZNLAB_TAP" data-home="1">Tap the bed</button>
+        <button data-go="pa">Measure pressure advance</button>
+        <button data-run="OZNLAB_WATCH DURATION=30" data-cold="1">Push test, 30 s</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- PA -->
+  <section class="view" id="v_pa">
+    <div class="two">
+      <div class="panel">
+        <h2>Measure pressure advance</h2>
+        <p class="lead">The extruder pulses slow and fast in the air while K goes up. The answer is the last K whose pressure does not dip below its new level after a speed drop. About 2 to 4 minutes and 15 to 25 cm of filament.</p>
+        <div class="form">
+          <label for="paFil">Filament</label><input id="paFil" type="text" list="filList" placeholder="as the slicer names it, e.g. PETG">
+          <label for="paNoz">Nozzle</label>
+          <select id="paNoz"><option value="">any (one nozzle)</option><option>0.2</option><option>0.25</option><option selected>0.4</option><option>0.5</option><option>0.6</option><option>0.8</option><option>1.0</option></select>
+          <label for="paTemp">Temperature</label><input id="paTemp" type="number" min="150" max="350" step="5" value="240">
+          <label for="paSave">Save it</label><label class="row" style="color:var(--text)"><input id="paSave" type="checkbox" checked> print start uses it for this filament and nozzle</label>
+        </div>
+        <datalist id="filList"></datalist>
+        <div class="row" style="margin-top:14px"><button class="primary" id="paStart">Start PA auto</button><span class="hint" id="paHint"></span></div>
+      </div>
+      <div class="panel">
+        <h2 id="paTitle">Result</h2>
+        <div class="row" style="align-items:baseline"><span id="paResult" class="pending">-</span><span class="muted" id="paSub">no run in this session</span></div>
+        <canvas id="kladder" aria-label="K values tried"></canvas>
+        <div class="legend"><span><span class="sw" style="border-color:var(--ok)"></span>no dip</span><span><span class="sw" style="border-color:var(--bad)"></span>dips, too much</span><span><span class="sw" style="border-color:var(--cmd)"></span>trying now</span></div>
+      </div>
+    </div>
+    <div class="two">
+      <div class="panel">
+        <h2>Pressure after each speed drop</h2>
+        <p class="hint" style="margin:0 0 6px">One line per K, 0 is the new level. Low K stays above it, too much K dips below the red line.</p>
+        <canvas id="falls" aria-label="Pressure after each speed drop"></canvas>
+      </div>
+      <div class="panel">
+        <h2>Trains</h2>
+        <table id="trains"><thead><tr><th>K</th><th>Dip</th><th>Limit</th><th>Verdict</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Saved values</h2>
+      <table id="savedPa"><thead><tr><th>Filament</th><th>Nozzle</th><th>Pressure advance</th><th>Measured at</th></tr></thead><tbody></tbody></table>
+      <p class="hint" id="savedNote"></p>
+    </div>
+  </section>
+
+  <!-- Z -->
+  <section class="view" id="v_z">
+    <div class="two">
+      <div class="panel">
+        <h2>Z offset</h2>
+        <p class="lead">A tap measures where the nozzle meets the bed and sets the z offset from it. The sensor gets stiffer as the hotend heats, so the tap also records how many Hz one micrometre of push gives.</p>
+        <div class="readouts" style="margin-bottom:12px">
+          <div><small>Last tap</small><b id="z_last">-</b></div>
+          <div><small>Saved offset</small><b id="z_saved">-</b></div>
+          <div><small>Squish (tap_adjust_z)</small><b id="z_adj">-</b></div>
+        </div>
+        <div class="row">
+          <button class="primary" data-run="OZNLAB_TAP" data-home="1">Tap now</button>
+          <button data-run="OZNLAB_TAP_ADJUST" title="After babystepping a first layer: keep that change">Keep my babystep</button>
+          <button data-run="SAVE_CONFIG" data-confirm="SAVE_CONFIG restarts Klipper. Continue?">Save config</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Sensitivity by temperature</h2>
+        <p class="hint" style="margin:0 0 6px">Hz per micrometre of nozzle push, from the taps. Homing and the crash watch use these.</p>
+        <canvas id="sens" style="width:100%;height:200px;display:block" aria-label="Sensitivity by temperature"></canvas>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="row"><h2 class="grow">Tap repeatability</h2><button data-run="OZNLAB_TAP SAMPLES=10 APPLY=0" data-home="1">Tap 10 times</button></div>
+      <p class="hint" style="margin:0 0 6px">Ten taps on the same spot, nothing is changed. The narrower the spread, the more the z offset can be trusted. A clean nozzle tip matters most.</p>
+      <div class="two" style="align-items:center">
+        <canvas id="taphist" style="width:100%;height:170px;display:block" aria-label="Spread of the taps"></canvas>
+        <div class="readouts"><div><small>Spread (max - min)</small><b id="tr_span">-</b></div><div><small>Standard deviation</small><b id="tr_sd">-</b></div><div><small>Allowed</small><b id="tr_tol">-</b></div></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Taps this session</h2>
+      <table id="taps"><thead><tr><th>Contact</th><th>Sensitivity</th><th>Push</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- MESH -->
+  <section class="view" id="v_mesh">
+    <div class="panel">
+      <div class="row"><h2 class="grow">Bed mesh</h2><span class="hint" id="meshInfo"></span>
+        <button data-run="OZNLAB_MESH_SETUP">Pick the area</button>
+        <button class="primary" data-run="OZNLAB_MESH" data-home="1">Measure with the nozzle</button></div>
+      <canvas id="mesh" style="width:100%;height:380px;display:block" aria-label="Bed mesh"></canvas>
+    </div>
+  </section>
+
+  <!-- TESTS -->
+  <section class="view" id="v_tests">
+    <div class="panel">
+      <h2>Tests</h2>
+      <p class="lead">Each test prints its result in the console below. The filament tests extrude in the air: park the nozzle over the purge area first.</p>
+      <div class="tests">
+        <div class="test"><b>Push test</b><p>Push the nozzle up with a finger for 30 s. Every push prints a line with its size.</p><span class="warnline">Cold nozzle only.</span><button data-run="OZNLAB_WATCH DURATION=30" data-cold="1">Start</button></div>
+        <div class="test"><b>Max flow</b><p>Extrudes faster and faster and finds where the hotend stops keeping up. Use the answer as the slicer's max volumetric speed.</p><button data-run="OZNLAB_MAX_FLOW" data-hot="1">Start</button></div>
+        <div class="test"><b>Retraction</b><p>Finds the retraction length that drops the melt pressure, the one that stops oozing without wasting time.</p><button data-run="OZNLAB_RETRACT_TEST" data-hot="1">Start</button></div>
+        <div class="test"><b>Temperature scan</b><p>Pressure against nozzle temperature: where this filament flows freely without cooking.</p><button data-run="OZNLAB_TEMP_SCAN" data-hot="1">Start</button></div>
+        <div class="test"><b>Crash test</b><p>Knock the toolhead for 60 s and see if each hit is noticed.</p><button data-run="OZNLAB_CRASH TEST=1">Start</button></div>
+        <div class="test"><b>Homing dry run</b><p>Runs the nozzle homing descent on a homed printer without changing anything.</p><button data-run="OZNLAB_HOME_TEST" data-home="1">Start</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HEALTH -->
+  <section class="view" id="v_health">
+    <div class="panel">
+      <div class="row"><h2 class="grow">Health check</h2><button class="primary" id="runCheck">Run check</button></div>
+      <p class="lead">Wiring, the chip, the coil, the config and the stored values, each with what to do when it is off.</p>
+      <div class="banner" id="quickRes" style="display:none;margin-bottom:12px"></div>
+      <div class="checks" id="checks"><div class="empty">Run the check to see the result here.</div></div>
+    </div>
+    <div class="panel">
+      <div class="row"><h2 class="grow">Support bundle</h2><button id="bundleBtn">Make the bundle</button></div>
+      <p class="lead">One zip with this check, the sensor settings, the history of every measurement, the newest PA and print logs, this page's console and the end of klippy.log. Send it with your question on Discord or GitHub.</p>
+      <div id="bundleOut" class="hint"></div>
+      <p class="hint" id="logNote"></p>
+    </div>
+  </section>
+</main>
+
+<dialog id="repDlg" class="wide"><h3 id="repTitle">Report</h3><div id="repText"></div><div class="row" style="justify-content:flex-end;margin-top:14px"><a id="repCsv" class="hint" target="_blank"></a><span class="grow"></span><button id="repClose">Close</button></div></dialog>
+
+<section id="con">
+  <div class="bar"><b>Console</b><span class="hint grow" id="conLast"></span>
+    <label class="hint row"><input type="checkbox" id="conOnly"> OznLab only</label>
+    <button class="ghost" id="conToggle">Open</button></div>
+  <div id="conLog"></div>
+  <form id="conForm" autocomplete="off"><input id="conIn" type="text" list="cmdList" placeholder="G-code or OZNLAB_ command, Enter to send, up for history"><button class="primary">Send</button></form>
+  <datalist id="cmdList"></datalist>
+</section>
+
+<div id="toasts" role="status" aria-live="polite"></div>
+<dialog id="dlg"><h3 id="dlgT"></h3><p id="dlgB"></p><div class="row" style="justify-content:flex-end"><button id="dlgNo" class="ghost">Cancel</button><button id="dlgYes" class="primary">OK</button></div></dialog>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+// ================= connection =================
+const qs = new URLSearchParams(location.search);
+const wsUrl = qs.get('moonraker') ? 'ws://' + qs.get('moonraker') + '/websocket'
+  : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/websocket';
+let ws = null, rpcId = 0, pending = {}, objName = null, sensorName = null;
+const S = { oz: {}, toolhead: {}, extruder: {}, heater_bed: {}, print_stats: {}, webhooks: {}, bed_mesh: {}, configfile: {} };
+const httpBase = qs.get('files') || (qs.get('moonraker') ? 'http://' + qs.get('moonraker') : location.origin);   // Moonraker's file server
+const esc = (t) => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// console lines arrive as '// text' from respond_info
+const clean = (l) => String(l).replace(/^\/\/\s?/, '');
+const hist = [];
+let lastT = 0;
+
+function rpc(method, params) {
+  return new Promise((resolve, reject) => {
+    if (!ws || ws.readyState !== 1) { reject({ message: 'not connected to the printer' }); return; }
+    const id = ++rpcId;
+    pending[id] = { resolve, reject };
+    ws.send(JSON.stringify({ jsonrpc: '2.0', method, params: params || {}, id }));
+  });
+}
+function connect() {
+  ws = new WebSocket(wsUrl);
+  ws.onopen = start;
+  ws.onclose = () => { setKlippy('disconnected', false); for (const id in pending) pending[id].reject({ message: 'connection lost' }); pending = {}; setTimeout(connect, 2000); };
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.id && pending[m.id]) { const p = pending[m.id]; delete pending[m.id]; m.error ? p.reject(m.error) : p.resolve(m.result); return; }
+    if (m.method === 'notify_status_update') merge(m.params[0]);
+    else if (m.method === 'notify_gcode_response') conAdd(m.params[0], 'r');
+    else if (m.method === 'notify_klippy_ready') start();
+    else if (m.method === 'notify_klippy_shutdown' || m.method === 'notify_klippy_disconnected') setKlippy(m.method === 'notify_klippy_shutdown' ? 'shutdown' : 'disconnected', false);
+  };
+}
+async function start() {
+  try {
+    const list = await rpc('printer.objects.list');
+    const names = list.objects.filter(n => n === 'oznlab_sensor' || n.startsWith('oznlab_sensor '));
+    if (!names.length) { setKlippy('no OznLab sensor in the config', false); return; }
+    objName = qs.get('sensor') ? 'oznlab_sensor ' + qs.get('sensor') : names[0];
+    sensorName = objName.split(' ').pop();
+    const want = { [objName]: null, toolhead: ['homed_axes', 'position'], extruder: ['temperature', 'target', 'pressure_advance', 'can_extrude'],
+      print_stats: ['state', 'filename'], webhooks: ['state', 'state_message'],
+      configfile: ['save_config_pending', 'save_config_pending_items'] };
+    if (list.objects.includes('heater_bed')) want.heater_bed = ['temperature', 'target'];
+    if (list.objects.includes('bed_mesh')) want.bed_mesh = ['probed_matrix', 'mesh_min', 'mesh_max', 'profile_name'];
+    const sub = await rpc('printer.objects.subscribe', { objects: want });
+    merge(sub.status);
+    beat();
+    loadConsole();
+    loadCommands();
+    afterRestart();
+  } catch (e) {
+    setKlippy('refused', false);
+    toast('err', 'Moonraker refused the connection', (e.message || '') + ' Open this page from the printer address, e.g. http://printer/oznlab.html');
+  }
+}
+let beatBusy = false;
+async function beat() {
+  if (beatBusy || !sensorName) return;
+  beatBusy = true;
+  try { await rpc('printer.gcode.script', { script: 'OZNLAB_LIVE SENSOR=' + sensorName }); } catch (e) {}
+  beatBusy = false;
+}
+setInterval(beat, 20000);
+
+// ================= state =================
+function merge(st) {
+  for (const k in st) {
+    const key = k === objName ? 'oz' : k;
+    if (!S[key]) S[key] = {};
+    Object.assign(S[key], st[k]);
+  }
+  const oz = st[objName];
+  if (oz && oz.live && !paused) addSamples(oz.live);
+  renderTop();
+  if (oz) {
+    if (oz.viz) { renderPA(); renderTaps(); renderTapRep(); }
+    if (oz.saved) { renderSaved(); renderZ(); renderCards(); }
+    if (oz.mon) addMon(oz.mon);
+    if ('mon' in oz) renderMonState();
+    if (oz.hist !== undefined && oz.hist !== histSeen) { histSeen = oz.hist; clearTimeout(histTimer); histTimer = setTimeout(loadHistory, 700); }
+    if (oz.setup) renderSetupSide();
+    if (oz.bundle) showBundle();
+    if ('log' in oz) $('logNote').textContent = oz.log ? 'Logs are kept in the config folder under oznlab/ (the newest 30 of each kind). log: 0 in the sensor section turns them off.'
+      : 'Logging is off (log: 0): the history, the filament cards and the print reports stay empty.';
+    renderReadouts();
+  }
+  if (st.configfile) renderPending();
+  if (st.bed_mesh) renderMesh();
+}
+function setKlippy(text, ok) { $('s_klippy').textContent = text; $('dot').classList.toggle('live', ok); }
+function homed(axes) { const h = (S.toolhead.homed_axes || ''); return [...axes].every(a => h.includes(a)); }
+function printing() { return ['printing', 'paused'].includes(S.print_stats.state); }
+function renderTop() {
+  const wh = S.webhooks.state;
+  if (wh) setKlippy(wh === 'ready' ? 'ready' : wh, wh === 'ready');
+  const h = S.toolhead.homed_axes || '';
+  $('s_axes').innerHTML = ['x', 'y', 'z'].map(a => `<span class="${h.includes(a) ? 'h' : ''}">${a.toUpperCase()}</span>`).join('');
+  const e = S.extruder;
+  if (e.temperature != null) $('s_noz').textContent = Math.round(e.temperature) + (e.target ? ' / ' + Math.round(e.target) : '') + ' C';
+  const b = S.heater_bed;
+  if (b && b.temperature != null) $('s_bed').textContent = Math.round(b.temperature) + (b.target ? ' / ' + Math.round(b.target) : '') + ' C';
+  $('s_print').textContent = S.print_stats.state || '-';
+  const i = S.oz.info || {};
+  const pa = e.pressure_advance != null ? e.pressure_advance : i.pa;
+  $('s_pa').textContent = (i.filament || '-') + ' / ' + (pa != null ? pa.toFixed(4) : '-');
+  const r = S.oz.running;
+  $('running').style.display = r ? 'flex' : 'none';
+  $('running').textContent = r ? r.replace('OZNLAB_', '').replace(/_/g, ' ').toLowerCase() + ' running' : '';
+  for (const btn of document.querySelectorAll('[data-run], #paStart, #runCheck, #quick, #stepRun, #bundleBtn')) btn.disabled = !!r && btn.dataset.run !== 'SAVE_CONFIG';
+  const ps = S.print_stats.state;
+  if (ps !== lastPs) {
+    // a print starting while the page is open: the watch is what matters now
+    if (ps === 'printing' && lastPs && lastPs !== 'paused' && curView !== 'print') { show('print'); toast('ok', 'Print started', 'Showing the clog and runout watch.'); }
+    lastPs = ps;
+  }
+  $('ver').textContent = S.oz.version ? 'module v' + S.oz.version : '';
+}
+
+// ================= commands =================
+function toast(kind, title, text, ms) {
+  const t = document.createElement('div');
+  t.className = 'toast ' + kind;
+  t.innerHTML = `<b></b><span></span>`;
+  t.querySelector('b').textContent = title; t.querySelector('span').textContent = text || '';
+  t.onclick = () => t.remove();
+  $('toasts').appendChild(t);
+  setTimeout(() => t.remove(), ms || (kind === 'err' ? 12000 : 6000));
+}
+function ask(title, body, yes) {
+  return new Promise(res => {
+    $('dlgT').textContent = title; $('dlgB').textContent = body; $('dlgYes').textContent = yes || 'Continue';
+    const d = $('dlg');
+    $('dlgYes').onclick = () => { d.close(); res(true); };
+    $('dlgNo').onclick = () => { d.close(); res(false); };
+    d.oncancel = () => res(false);
+    d.showModal();
+  });
+}
+// everything a command needs checked before it is sent, in the order a person would hit it
+async function preflight(cmd, opts) {
+  if (S.webhooks.state && S.webhooks.state !== 'ready') { toast('err', 'Klipper is not ready', S.webhooks.state_message || S.webhooks.state); return false; }
+  if (S.oz.running) { toast('warn', 'Another OznLab command runs', 'Wait until ' + S.oz.running + ' finishes.'); return false; }
+  if (printing() && !opts.duringPrint) { toast('warn', 'A print is running', cmd.split(' ')[0] + ' moves the toolhead. Run it when the printer is idle.'); return false; }
+  if (opts.cold && (S.extruder.temperature || 0) > 60) { toast('warn', 'The nozzle is hot', 'The push test is done with a cold nozzle. It is at ' + Math.round(S.extruder.temperature) + ' C.'); return false; }
+  if (opts.home && !homed('xyz')) {
+    return ask('The printer is not homed', cmd.split(' ')[0] + ' homes all axes first (G28). Make sure nothing is on the bed.', 'Home and start');
+  }
+  if (opts.hot && !homed('z')) {
+    return ask('Z is not homed', 'This test extrudes where the nozzle is now. Check that it is well above the bed and over the purge area.', 'Start here');
+  }
+  return true;
+}
+// true: ran, false: Klipper returned an error, null: not sent (a check or the person said no)
+async function run(cmd, opts) {
+  opts = opts || {};
+  if (!(await preflight(cmd, opts))) return null;
+  if (opts.confirm && !(await ask('Confirm', opts.confirm, 'Run it'))) return null;
+  conAdd(cmd, 'c');
+  try {
+    await rpc('printer.gcode.script', { script: cmd });
+    if (opts.done) toast('ok', opts.done);
+    return true;
+  } catch (e) {
+    const msg = (e.message || JSON.stringify(e)).replace(/^!!\s*/, '');
+    toast('err', cmd.split(' ')[0] + ' stopped', msg);
+    conAdd('!! ' + msg, 'e');
+    return false;
+  }
+}
+for (const b of document.querySelectorAll('[data-run]')) {
+  b.addEventListener('click', () => run(b.dataset.run, { home: b.dataset.home, cold: b.dataset.cold, hot: b.dataset.hot, confirm: b.dataset.confirm }));
+}
+for (const b of document.querySelectorAll('[data-go]')) b.addEventListener('click', () => show(b.dataset.go));
+
+// ================= navigation =================
+let curView = 'live', lastPs;
+function show(v) {
+  if (!$('v_' + v)) v = 'live';
+  curView = v;
+  for (const b of $('nav').querySelectorAll('button')) b.classList.toggle('sel', b.dataset.v === v);
+  for (const s of document.querySelectorAll('.view')) s.classList.toggle('sel', s.id === 'v_' + v);
+  document.body.classList.toggle('compact', v !== 'live');
+  $('scopeTitle').textContent = v === 'pa' ? 'Sensor and speed steps' : 'Sensor';
+  history.replaceState(null, '', '#' + v);
+  requestAnimationFrame(redrawAll);
+}
+$('nav').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b && b.dataset.v) show(b.dataset.v); });
+
+// ================= console =================
+const conLines = [];
+function conAdd(text, kind) {
+  for (const line of String(text).split('\n')) {
+    if (line === '' || /^\/\/ action:/.test(line)) continue;      // Mainsail popup plumbing
+    const k = kind === 'r' && /^(\/\/\s*)?!!/.test(line) ? 'e' : (kind === 'r' && /oznlab/i.test(line) ? 'o' : kind);
+    conLines.push({ text: line, k, oz: /oznlab/i.test(line) || kind === 'c' });
+  }
+  while (conLines.length > 400) conLines.shift();
+  const last = conLines[conLines.length - 1];
+  if (last) $('conLast').textContent = last.text.slice(0, 140);
+  renderCon();
+  for (const c of caps) c.push(...String(text).split('\n').map(clean));
+  if (caps.size && curView === 'setup') renderStepOut();
+}
+function renderCon() {
+  const only = $('conOnly').checked, log = $('conLog');
+  const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 8;
+  log.innerHTML = '';
+  for (const l of conLines) {
+    if (only && !l.oz) continue;
+    const d = document.createElement('div'); d.className = l.k; d.textContent = (l.k === 'c' ? '> ' : '') + l.text; log.appendChild(d);
+  }
+  if (atEnd) log.scrollTop = log.scrollHeight;
+}
+async function loadConsole() {
+  try {
+    const r = await rpc('server.gcode_store', { count: 120 });
+    conLines.length = 0;
+    for (const g of r.gcode_store) conAdd(g.message, g.type === 'command' ? 'c' : 'r');
+  } catch (e) {}
+}
+async function loadCommands() {
+  try {
+    const r = await rpc('printer.gcode.help');
+    const names = Object.keys(r).sort((a, b) => (b.startsWith('OZNLAB') - a.startsWith('OZNLAB')) || a.localeCompare(b));
+    $('cmdList').innerHTML = names.map(n => `<option value="${n}">`).join('');
+  } catch (e) {}
+}
+$('conToggle').onclick = () => { const o = $('con').classList.toggle('open'); $('conToggle').textContent = o ? 'Close' : 'Open'; if (o) { renderCon(); $('conIn').focus(); } };
+$('conOnly').onchange = renderCon;
+const cmdHist = []; let histPos = 0;
+$('conForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const v = $('conIn').value.trim(); if (!v) return;
+  cmdHist.push(v); histPos = cmdHist.length; $('conIn').value = '';
+  conAdd(v, 'c');
+  try { await rpc('printer.gcode.script', { script: v }); }
+  catch (er) { const m = (er.message || '').replace(/^!!\s*/, ''); conAdd('!! ' + m, 'e'); toast('err', v.split(' ')[0] + ' failed', m); }
+};
+$('conIn').onkeydown = (e) => {
+  if (e.key === 'ArrowUp' && histPos > 0) { histPos--; $('conIn').value = cmdHist[histPos]; e.preventDefault(); }
+  if (e.key === 'ArrowDown') { histPos = Math.min(cmdHist.length, histPos + 1); $('conIn').value = cmdHist[histPos] || ''; e.preventDefault(); }
+};
+// health check: the console lines that arrive while OZNLAB_CHECK runs are its report
+// console lines that arrive while a command runs are its report (cleaned of the '// ')
+const caps = new Set();
+async function runCapture(cmd, opts, lines) {
+  lines = lines || []; caps.add(lines);
+  try { return { ok: await run(cmd, opts), lines }; } finally { caps.delete(lines); }
+}
+function renderChecks(lines) {
+  const box = $('checks'); box.innerHTML = '';
+  let n = 0;
+  lines.forEach((l) => {
+    const m = l.match(/^\s*\[\s*(OK|WARN|FAIL)\s*\]\s*(.*)$/);
+    if (!m) return;
+    const d = document.createElement('div'); d.innerHTML = `<i class="${m[1]}">${m[1]}</i><span></span>`; d.querySelector('span').textContent = m[2]; box.appendChild(d); n++;
+  });
+  if (!n) box.innerHTML = '<div class="empty">The check printed no result lines; see the console.</div>';
+}
+$('runCheck').onclick = async () => {
+  const { ok, lines } = await runCapture('OZNLAB_CHECK');
+  if (!ok) return;
+  renderChecks(lines);
+  const fails = lines.filter(l => /\[\s*FAIL/.test(l)).length, warns = lines.filter(l => /\[\s*WARN/.test(l)).length;
+  toast(fails ? 'err' : warns ? 'warn' : 'ok', fails ? fails + (fails > 1 ? ' problems found' : ' problem found') : warns ? warns + (warns > 1 ? ' warnings' : ' warning') : 'Everything checks out');
+};
+
+// ================= PA =================
+$('paTemp').addEventListener('input', () => { $('paTemp').dataset.touched = 1; });
+$('paStart').onclick = async () => {
+  const fil = $('paFil').value.trim(), noz = $('paNoz').value, temp = parseInt($('paTemp').value, 10);
+  if (!fil) { toast('warn', 'Name the filament', 'The result is saved per filament, as the slicer names it (PLA, PETG, ASA ...).'); $('paFil').focus(); return; }
+  if (!(temp >= 150 && temp <= 350)) { toast('warn', 'Check the temperature', 'Between 150 and 350 C.'); $('paTemp').focus(); return; }
+  const cmd = 'OZNLAB_PA_AUTO FILAMENT=' + fil.replace(/\s+/g, '_') + (noz ? ' NOZZLE=' + noz : '') + ' TEMP=' + temp + ($('paSave').checked ? '' : ' APPLY=0');
+  const ok = await run(cmd, { home: 1 });
+  if (ok) toast('ok', 'PA auto finished', $('paSave').checked ? 'Saved. SAVE_CONFIG keeps it after a restart.' : 'Measured only, nothing saved.');
+};
+function renderPA() {
+  const pa = S.oz.viz && S.oz.viz.pa;
+  const tb = $('trains').querySelector('tbody');
+  if (!pa) { tb.innerHTML = '<tr><td colspan="4" class="empty">No run yet.</td></tr>'; drawLadder(); drawFalls(); return; }
+  const res = $('paResult'), sub = $('paSub');
+  $('paTitle').textContent = 'Result' + (pa.filament ? ', ' + pa.filament : '');
+  if (pa.state === 'done') { res.textContent = pa.result.toFixed(4); res.className = ''; sub.textContent = 'next K ' + pa.k_bad.toFixed(4) + ' dips'; }
+  else if (pa.state === 'failed') { res.textContent = 'stopped'; res.className = 'pending'; sub.textContent = 'see the console for why'; }
+  else { res.textContent = pa.cur ? pa.cur.K.toFixed(4) : '...'; res.className = 'pending'; sub.textContent = pa.cur ? 'trying this K' : 'preparing'; }
+  tb.innerHTML = pa.trains.map(t => `<tr><td>${t.K.toFixed(4)}</td><td>${(100 * t.dip).toFixed(1)} %</td><td>-${(100 * t.limit).toFixed(1)} %</td><td class="${t.too_much ? 'bad' : 'ok'}">${t.too_much ? 'too much' : 'no dip'}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">First train running.</td></tr>';
+  drawLadder(); drawFalls();
+}
+function renderSaved() {
+  const sv = S.oz.saved || {}, tb = $('savedPa').querySelector('tbody');
+  const rows = (sv.pa_auto || []).map(p => `<tr><td>${p.filament}</td><td>${p.nozzle || 'any'}</td><td>${p.pa.toFixed(4)}</td><td>${p.temp ? p.temp + ' C' : '-'}</td></tr>`);
+  tb.innerHTML = rows.join('') || '<tr><td colspan="4" class="empty">Nothing saved yet. Run PA auto with "Save it" on.</td></tr>';
+  const sc = Object.entries(sv.pa_scale || {});
+  $('savedNote').textContent = sc.length ? 'Pattern method scales: ' + sc.map(([k, v]) => k + ' ' + v).join(', ') + '. Print start uses a saved PA auto value first.' : '';
+  const fils = new Set([...(sv.pa_auto || []).map(p => p.filament), ...sc.map(x => x[0]), 'PLA', 'PETG', 'ASA', 'ABS', 'TPU']);
+  $('filList').innerHTML = [...fils].map(f => `<option value="${f}">`).join('');
+  if (!$('paFil').value && S.oz.info && S.oz.info.filament) $('paFil').value = S.oz.info.filament;
+}
+function setupCanvas(c) {
+  const r = c.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+  if (!r.width) return null;
+  if (c.width !== Math.round(r.width * d) || c.height !== Math.round(r.height * d)) { c.width = Math.round(r.width * d); c.height = Math.round(r.height * d); }
+  const g = c.getContext('2d'); g.setTransform(d, 0, 0, d, 0, 0); g.clearRect(0, 0, r.width, r.height);
+  g.font = '12px ' + css('--font'); g.lineJoin = 'round';
+  return { g, w: r.width, h: r.height };
+}
+// the K ladder: every K tried on one axis, the bracket closing in on the answer
+function drawLadder() {
+  const cv = setupCanvas($('kladder')); if (!cv) return; const { g, w, h } = cv;
+  const pa = S.oz.viz && S.oz.viz.pa;
+  const ks = pa ? pa.trains.map(t => t.K) : [];
+  if (pa && pa.cur) ks.push(pa.cur.K);
+  const kmax = Math.max(0.1, ...ks) * 1.08;
+  const L = 14, R = 14, y = 44, X = k => L + k / kmax * (w - L - R);
+  g.strokeStyle = css('--rule'); g.lineWidth = 2; g.beginPath(); g.moveTo(L, y); g.lineTo(w - R, y); g.stroke();
+  g.fillStyle = css('--dim');
+  const step = kmax > 0.3 ? 0.1 : kmax > 0.15 ? 0.05 : 0.02;
+  for (let k = 0; k <= kmax; k += step) { g.fillRect(X(k), y - 4, 1, 8); g.fillText(k.toFixed(2), X(k) - 12, y + 22); }
+  if (!pa) return;
+  const ok = pa.trains.filter(t => !t.too_much).map(t => t.K), bad = pa.trains.filter(t => t.too_much).map(t => t.K);
+  if (ok.length && bad.length) {
+    const a = Math.max(...ok), b = Math.min(...bad.filter(k => k > a).concat([Math.max(...bad)]));
+    if (b > a) { g.fillStyle = css('--band'); g.fillRect(X(a), y - 14, X(b) - X(a), 28); }
+  }
+  for (const t of pa.trains) {
+    g.fillStyle = t.too_much ? css('--bad') : css('--ok');
+    g.beginPath(); g.arc(X(t.K), y, 5, 0, 7); g.fill();
+  }
+  if (pa.cur && pa.state === 'running') {
+    g.strokeStyle = css('--cmd'); g.lineWidth = 2; g.beginPath(); g.arc(X(pa.cur.K), y, 9, 0, 7); g.stroke();
+  }
+  if (pa.state === 'done') {
+    const x = X(pa.result);
+    g.fillStyle = css('--sig'); g.beginPath(); g.moveTo(x, y - 12); g.lineTo(x - 7, y - 24); g.lineTo(x + 7, y - 24); g.fill();
+    g.font = '600 13px ' + css('--head'); g.fillText(pa.result.toFixed(4), x - 22, y - 28);
+  }
+}
+const darkUI = () => true;
+// low K blue, high K red: a sequence the eye reads without a legend
+function kColor(k, kmin, kmax) { const x = kmax > kmin ? (k - kmin) / (kmax - kmin) : 0.5; return `hsl(${225 - 215 * x}, ${darkUI() ? 75 : 70}%, ${darkUI() ? 66 : 42}%)`; }
+function drawFalls() {
+  const cv = setupCanvas($('falls')); if (!cv) return; const { g, w, h } = cv;
+  const pa = S.oz.viz && S.oz.viz.pa;
+  const L = 34, R = 8, T = 8, B = 22, pw = w - L - R, ph = h - T - B;
+  let lo = -0.25, hi = 1.0;
+  if (pa) for (const t of pa.trains) for (const v of t.curve) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  const tmax = 0.3, X = s => L + s / tmax * pw, Y = v => T + (hi - v) / (hi - lo) * ph;
+  g.strokeStyle = css('--rule'); g.fillStyle = css('--dim'); g.lineWidth = 1; g.beginPath();
+  for (const v of [0, 0.5, 1]) { g.moveTo(L, Y(v)); g.lineTo(L + pw, Y(v)); g.fillText(v.toFixed(1), 4, Y(v) + 4); }
+  g.stroke();
+  for (const s of [0, 0.1, 0.2, 0.3]) g.fillText((s * 1000) + ' ms', Math.min(X(s) - 10, w - 44), h - 5);
+  if (!pa || !pa.trains.length) { g.fillText('the curves appear after the first train', L + 8, T + 18); return; }
+  const lim = pa.trains[pa.trains.length - 1].limit;
+  g.save(); g.setLineDash([4, 4]); g.strokeStyle = css('--bad'); g.beginPath(); g.moveTo(L, Y(-lim)); g.lineTo(L + pw, Y(-lim)); g.stroke(); g.restore();
+  const ks = pa.trains.map(t => t.K), kmin = Math.min(...ks), kmax = Math.max(...ks);
+  for (const t of pa.trains) {
+    const best = pa.state === 'done' && Math.abs(t.K - pa.result) < 1e-6;
+    g.strokeStyle = best ? css('--sig') : kColor(t.K, kmin, kmax); g.lineWidth = best ? 3 : 1.5;
+    g.setLineDash(t.too_much ? [4, 3] : []);
+    g.beginPath();
+    t.curve.forEach((v, i) => { const s = t.start + i * t.dt; if (s > tmax) return; i ? g.lineTo(X(s), Y(v)) : g.moveTo(X(s), Y(v)); });
+    g.stroke();
+  }
+  g.setLineDash([]);
+}
+
+// ================= Z =================
+function renderZ() {
+  const sv = S.oz.saved || {};
+  const f = (v) => v == null ? '-' : v.toFixed(3) + ' mm';
+  $('z_last').textContent = f(sv.last_tap_z); $('z_saved').textContent = f(sv.tap_z);
+  $('z_adj').textContent = sv.tap_adjust_z == null ? '-' : sv.tap_adjust_z.toFixed(3) + ' mm';
+  drawSens();
+}
+function renderTaps() {
+  const ev = ((S.oz.viz && S.oz.viz.events) || []).filter(e => e.kind === 'tap').reverse();
+  $('taps').querySelector('tbody').innerHTML = ev.map(e => `<tr><td>${e.z.toFixed(4)} mm</td><td>${e.sens} Hz/um</td><td>${e.amp} Hz</td></tr>`).join('')
+    || '<tr><td colspan="3" class="empty">No tap since the page opened.</td></tr>';
+}
+function drawSens() {
+  const cv = setupCanvas($('sens')); if (!cv) return; const { g, w, h } = cv;
+  const tb = (S.oz.saved && S.oz.saved.sens) || [];
+  if (!tb.length) { g.fillStyle = css('--dim'); g.fillText('No tap yet: the first tap fills this in.', 10, 24); return; }
+  const L = 34, B = 22, T = 10, vmax = Math.max(...tb.map(x => x[1])) * 1.15, bw = Math.min(46, (w - L) / tb.length - 10);
+  tb.forEach(([t, v], i) => {
+    const x = L + 6 + i * (bw + 10), y = T + (1 - v / vmax) * (h - T - B);
+    g.fillStyle = css('--sig'); g.fillRect(x, y, bw, h - B - y);
+    g.fillStyle = css('--text'); g.fillText(v.toFixed(1), x + 2, y - 4);
+    g.fillStyle = css('--dim'); g.fillText(t + ' C', x + 2, h - 6);
+  });
+}
+
+// ================= mesh =================
+// low blue, level near white, high red (diverging: the eye finds both ends)
+function meshColor(x) { const d = x - 0.5; return `hsl(${d < 0 ? 215 : 8}, ${Math.round(20 + 140 * Math.abs(d))}%, ${Math.round(92 - 70 * Math.abs(d))}%)`; }
+function renderMesh() {
+  const cv = setupCanvas($('mesh')); if (!cv) return; const { g, w, h } = cv;
+  const m = S.bed_mesh || {}, z = m.probed_matrix;
+  if (!z || !z.length || !z[0].length || (z.length === 1 && z[0].length === 1)) {
+    $('meshInfo').textContent = 'no mesh loaded';
+    g.fillStyle = css('--dim'); g.fillText('No mesh loaded. Pick the area once, then measure.', 12, 24); return;
+  }
+  const flat = z.flat(), lo = Math.min(...flat), hi = Math.max(...flat), span = Math.max(hi - lo, 1e-6);
+  $('meshInfo').textContent = (m.profile_name || 'mesh') + ', range ' + (hi - lo).toFixed(3) + ' mm';
+  const ny = z.length, nx = z[0].length, size = Math.min((w - 80) / nx, (h - 30) / ny);
+  const ox = (w - 60 - size * nx) / 2, oy = 6;
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const v = z[j][i], x = (v - lo) / span;           // low blue, high red
+    g.fillStyle = meshColor(x);
+    const px = ox + i * size, py = oy + (ny - 1 - j) * size;   // Y up, as on the bed
+    g.fillRect(px + 1, py + 1, size - 2, size - 2);
+    if (size > 34) { g.fillStyle = '#15181a'; g.fillText(v.toFixed(3), px + 4, py + size / 2 + 4); }
+  }
+  const gx = w - 46; for (let k = 0; k <= 20; k++) { const x = k / 20; g.fillStyle = meshColor(x); g.fillRect(gx, oy + (1 - x) * (ny * size - 8), 14, (ny * size) / 20 + 1); }
+  g.fillStyle = css('--dim'); g.textAlign = 'right'; g.fillText(hi.toFixed(3), gx - 6, oy + 10); g.fillText(lo.toFixed(3), gx - 6, oy + ny * size - 2); g.textAlign = 'left';
+}
+
+// ================= live scope =================
+const LAG = 0.35; let clock = null, flip = false, userFlip = false, paused = false;
+function makeClock(t0) {
+  const c = { t: t0, wall: performance.now(), target: t0 + LAG };
+  c.view = () => { const now = performance.now(); let v = c.t + (now - c.wall) / 1000; const lim = c.target - 0.02; if (v > lim) { v = lim; c.t = v; c.wall = now; } return v; };
+  return c;
+}
+function addSamples(live) {
+  const before = lastT;
+  for (const [t, f] of live) if (t > lastT) { hist.push([t, f]); lastT = t; }
+  while (hist.length && hist[0][0] < lastT - 70) hist.shift();
+  if (lastT > before) {
+    if (!clock || lastT - clock.view() > 1.0 || clock.view() > lastT) clock = makeClock(lastT - LAG);
+    clock.target = lastT;
+  }
+}
+function smoothed(pts, win) {
+  if (!win) return pts;
+  const out = []; let j = 0, sum = 0;
+  for (let i = 0; i < pts.length; i++) { sum += pts[i][1]; while (pts[i][0] - pts[j][0] > win) { sum -= pts[j][1]; j++; } out.push([pts[i][0] - (pts[i][0] - pts[j][0]) / 2, sum / (i - j + 1)]); }
+  return out;
+}
+function median(a) { if (!a.length) return null; const s = a.slice().sort((x, y) => x - y); return s[s.length >> 1]; }
+function niceStep(range, n) { const raw = range / n, p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p; return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p; }
+function drawLive() {
+  const cv = setupCanvas($('live')); if (!cv) return; const { g, w, h } = cv;
+  if ($('mode').value === 'fft') { drawSpectrum(g, w, h); return; }
+  const L = 58, R = 10, T = 10, B = 24, pw = w - L - R, ph = h - T - B;
+  const W = +$('win').value, t1 = clock ? clock.view() : lastT, t0 = t1 - W;
+  const pts = hist.filter(p => p[0] >= t0 && p[0] <= t1), sgn = flip ? -1 : 1;
+  if (pts.length < 2) {
+    g.fillStyle = css('--dim'); g.font = '14px ' + css('--font');
+    g.fillText(!objName ? 'Connecting to the printer ...' : 'Waiting for samples. The sensor streams during taps, PA tests, prints and while this page is open.', L, T + ph / 2);
+    return;
+  }
+  const info = S.oz.info || {}, um = $('unit').value === 'um' && info.sens, U = um ? 1 / info.sens : 1;
+  const smSel = $('smooth').value, sm = smoothed(pts, smSel === 'auto' ? ((S.oz.rate || 100) >= 200 ? 0.01 : 0.15) : +smSel);
+  const ref = median(sm.slice(0, Math.max(3, sm.length >> 3)).map(p => p[1]));
+  let lo = Infinity, hi = -Infinity;
+  for (const p of sm) { const y = sgn * (p[1] - ref); lo = Math.min(lo, y); hi = Math.max(hi, y); }
+  const wave = paWave(t0, t1, ref, sgn);
+  if (wave) for (const s of wave.segs) { lo = Math.min(lo, s[2]); hi = Math.max(hi, s[2]); }
+  const scaleSel = $('scale').value;
+  const minR = scaleSel === 'auto' ? Math.max(300, 20 * (info.step || 0), 40 * (info.noise || 0)) : +scaleSel;
+  if (hi - lo < minR) { const m = (hi + lo) / 2; lo = m - minR / 2; hi = m + minR / 2; }
+  const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+  const X = t => L + (t - t0) / (t1 - t0) * pw, Y = v => T + (hi - v) / (hi - lo) * ph;
+  g.strokeStyle = css('--rule'); g.fillStyle = css('--dim'); g.lineWidth = 1; g.beginPath();
+  const st = niceStep((hi - lo) * U, 5) / U;
+  for (let v = Math.ceil(lo / st) * st; v <= hi; v += st) { g.moveTo(L, Y(v)); g.lineTo(L + pw, Y(v)); const lab = v * U; g.fillText((um && Math.abs(lab) < 10 ? lab.toFixed(1) : lab.toFixed(0)) + (um ? ' um' : ' Hz'), 4, Y(v) + 4); }
+  const ts = niceStep(W, 5);
+  for (let s = 0; s <= W + 1e-9; s += ts) { const x = X(t1 - s); g.moveTo(x, T); g.lineTo(x, T + ph); g.fillText(s ? '-' + (+s.toFixed(1)) + ' s' : 'now', x - 12, h - 6); }
+  g.stroke();
+  for (const e of ((S.oz.viz && S.oz.viz.events) || [])) {
+    if (e.kind === 'burst' && e.t1 > t0 && e.t0 < t1) { g.fillStyle = css('--band'); g.fillRect(X(Math.max(e.t0, t0)), T, X(Math.min(e.t1, t1)) - X(Math.max(e.t0, t0)), ph); }
+    if (e.kind === 'tap' && e.t > t0 && e.t <= t1) { g.strokeStyle = css('--tap'); g.beginPath(); g.moveTo(X(e.t), T); g.lineTo(X(e.t), T + ph); g.stroke(); g.fillStyle = css('--tap'); g.fillText('tap ' + e.z.toFixed(3) + ' mm', X(e.t) + 5, T + 14); }
+  }
+  if (wave) {
+    g.save(); g.setLineDash([7, 5]); g.strokeStyle = css('--cmd'); g.lineWidth = 1.6; g.beginPath(); let first = true;
+    for (const [a, b, v] of wave.segs) { if (b < t0 || a > t1) continue; const xa = X(Math.max(a, t0)), xb = X(Math.min(b, t1)); if (first) { g.moveTo(xa, Y(v)); first = false; } else g.lineTo(xa, Y(v)); g.lineTo(xb, Y(v)); }
+    g.stroke(); g.restore();
+    g.fillStyle = css('--cmd'); g.font = '600 13px ' + css('--head'); g.fillText('K ' + wave.K.toFixed(4), L + pw - 70, T + 16);
+  }
+  const path = (arr, color, lw) => { g.strokeStyle = color; g.lineWidth = lw; g.beginPath(); arr.forEach((p, i) => { const x = X(p[0]), y = Y(sgn * (p[1] - ref)); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke(); };
+  if (sm !== pts) path(pts, css('--raw'), 1);
+  path(sm, css('--sig'), 2);
+}
+function paWave(t0, t1, ref, sgn) {
+  const pa = S.oz.viz && S.oz.viz.pa, cur = pa && pa.cur;
+  if (!cur || !cur.ups || !cur.ups.length) return null;
+  const ups = cur.ups, downs = cur.downs;
+  if (downs[downs.length - 1] + 1.2 < t0) return null;
+  const val = (a, b) => median(hist.filter(p => p[0] >= a && p[0] <= b).map(p => sgn * (p[1] - ref)));
+  const slows = [], fasts = [];
+  for (let i = 0; i < ups.length; i++) {
+    const f = val(ups[i] + 0.35, downs[i] - 0.04); if (f !== null) fasts.push(f);
+    const nx = i + 1 < ups.length ? ups[i + 1] - 0.05 : downs[i] + 0.95;
+    const s = val(downs[i] + 0.5, nx); if (s !== null) slows.push(s);
+  }
+  const s0 = val(ups[0] - 0.3, ups[0] - 0.03); if (s0 !== null) slows.push(s0);
+  const vs = median(slows), vf = median(fasts);
+  if (vs === null || vf === null) return null;
+  if (!userFlip && vf < vs) { flip = !flip; return null; }    // more pressure = line up
+  const lev = (a, b, d) => { const v = val(a, b); return v === null ? d : v; };
+  const segs = [[ups[0] - 1.0, ups[0], lev(ups[0] - 0.3, ups[0] - 0.03, vs)]];
+  for (let i = 0; i < ups.length; i++) {
+    const nx = i + 1 < ups.length ? ups[i + 1] : downs[i] + 1.0;
+    segs.push([ups[i], downs[i], lev(ups[i] + 0.35, downs[i] - 0.04, vf)]);
+    segs.push([downs[i], nx, lev(downs[i] + 0.5, nx - 0.05, vs)]);
+  }
+  return { segs, K: cur.K };
+}
+function renderReadouts() {
+  const i = S.oz.info || {}, set = (id, t) => { $(id).textContent = t; };
+  if (hist.length) set('r_f', (hist[hist.length - 1][1] / 1e6).toFixed(4) + ' MHz');
+  set('r_n', (i.noise != null ? i.noise + ' Hz' : '-') + ' / ' + (i.step != null ? i.step + ' Hz' : '-'));
+  set('r_s', i.sens ? i.sens + ' Hz/um' : 'no tap yet');
+  set('r_pa', i.pa != null ? i.pa.toFixed(4) : '-');
+  set('r_m', i.monitor ? (i.ratio != null ? i.ratio.toFixed(2) + ' x normal' : 'on') : 'off');
+  set('r_rate', S.oz.rate ? S.oz.rate + ' /s' : '-');
+  if (!$('paFil').value && i.filament && document.activeElement !== $('paFil')) $('paFil').value = i.filament;
+  const tg = S.extruder.target; if (tg >= 150 && !$('paTemp').dataset.touched && document.activeElement !== $('paTemp')) $('paTemp').value = Math.round(tg);
+}
+$('flip').onclick = (e) => { flip = !flip; userFlip = true; e.target.classList.toggle('on', flip); };
+$('pause').onclick = (e) => { paused = !paused; e.target.classList.toggle('on', paused); e.target.textContent = paused ? 'Resume' : 'Pause'; };
+// ================= setup =================
+// Each step is the module's OZNLAB_SETUP STEP=n; its console lines are the step's report. What a
+// step measures is staged with configfile.set, the page shows it and saves it with SAVE_CONFIG,
+// then picks the setup up again after the restart.
+const ART = {
+  wire: `<svg viewBox="0 0 150 120" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="20" width="44" height="34" rx="4"/><path d="M18 54v10M30 54v10M42 54v10"/><path d="M52 37c24 0 26 46 50 46"/><ellipse cx="118" cy="83" rx="22" ry="8" stroke="var(--sig)"/><ellipse cx="118" cy="83" rx="13" ry="4.5" stroke="var(--sig)"/><path d="M104 100c4 5 24 5 28 0M100 108c6 7 30 7 36 0" stroke="var(--cmd)" stroke-dasharray="3 3"/></svg>`,
+  wave: `<svg viewBox="0 0 150 120" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="40" cy="60" rx="26" ry="10" stroke="var(--sig)"/><ellipse cx="40" cy="60" rx="15" ry="5" stroke="var(--sig)"/><path d="M76 60c6-30 10-30 16 0s10 30 16 0 10-30 16 0 10 30 16 0" stroke="var(--cmd)"/><path d="M76 24h64M76 96h64" stroke-dasharray="2 4"/></svg>`,
+  push: `<svg viewBox="0 0 150 120" fill="none" stroke="currentColor" stroke-width="2"><rect x="50" y="10" width="50" height="40" rx="3"/><path d="M60 50v14h30V50M68 64l7 14 7-14"/><path d="M75 116V92" stroke="var(--sig)" stroke-width="3"/><path d="M67 100l8-8 8 8" stroke="var(--sig)" stroke-width="3"/><path d="M112 30c10 0 10 20 0 20" stroke="var(--cmd)"/><path d="M120 24c16 0 16 32 0 32" stroke="var(--cmd)"/></svg>`,
+  tap: `<svg viewBox="0 0 150 120" fill="none" stroke="currentColor" stroke-width="2"><rect x="50" y="8" width="50" height="36" rx="3"/><path d="M60 44v14h30V44M68 58l7 14 7-14"/><path d="M10 96h130"/><path d="M75 74v18" stroke="var(--sig)" stroke-dasharray="3 3"/><circle cx="75" cy="96" r="4" fill="var(--sig)" stroke="none"/><path d="M120 54v24M114 70l6 8 6-8" stroke="var(--cmd)"/></svg>`,
+  pa: `<svg viewBox="0 0 150 120" fill="none" stroke="currentColor" stroke-width="2"><rect x="18" y="8" width="44" height="34" rx="3"/><path d="M26 42v14h28V42M33 56l7 12 7-12"/><path d="M40 70v40" stroke="var(--sig)" stroke-width="3"/><path d="M78 92h14V44h22v48h14V44h14" stroke="var(--cmd)" stroke-dasharray="4 3"/><path d="M78 92h14c2-40 6-48 22-48v4c0 40 4 44 14 44 2-40 6-48 14-48" stroke="var(--sig)"/></svg>`,
+  home: `<svg viewBox="0 0 150 120" fill="none" stroke="currentColor" stroke-width="2"><rect x="50" y="8" width="50" height="36" rx="3"/><path d="M60 44v14h30V44M68 58l7 14 7-14"/><path d="M10 100h130"/><path d="M24 30v62M18 84l6 8 6-8" stroke="var(--cmd)"/><path d="M120 92l10-10 10 10M123 89v9h14v-9" stroke="var(--sig)"/></svg>`,
+  mesh: `<svg viewBox="0 0 150 120" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 92l30-56h92l-30 56z"/>${[0, 1, 2, 3].map(j => [0, 1, 2, 3].map(i => { const x = 34 + i * 26 + (3 - j) * 7.5 - 6, y = 47 + j * 13.5; return `<circle cx="${x}" cy="${y}" r="3" fill="${(i + j) % 3 ? 'var(--cmd)' : 'var(--sig)'}" stroke="none"/>`; }).join('')).join('')}</svg>`,
+  macro: `<svg viewBox="0 0 150 120" fill="none" stroke="currentColor" stroke-width="2"><rect x="22" y="8" width="106" height="104" rx="6"/><path d="M36 30h50M36 46h70M36 78h40M36 94h60"/><path d="M36 62h78" stroke="var(--sig)" stroke-width="3"/></svg>`,
+};
+const STEPS = [
+  { n: 1, art: 'wire', title: 'Does the sensor answer?', cmd: 'OZNLAB_SETUP STEP=1',
+    text: 'Reads the chip over I2C and checks the coil frequency, the noise and the error flags. Nothing moves.' },
+  { n: 2, art: 'wave', title: 'Drive current', cmd: 'OZNLAB_SETUP STEP=2', recheck: true,
+    text: 'How hard the chip drives the coil. When it has to change, the new value shows up below: save it and this step checks it again after the restart.' },
+  { n: 3, art: 'push', title: 'Does the coil feel the hotend?', cmd: 'OZNLAB_SETUP STEP=3', cold: true, count: true,
+    text: 'For 25 seconds, push the cold nozzle up with a finger three times. Each push shows on the graph above and is counted here. Never touch a hot nozzle.' },
+  { n: 4, art: 'tap', title: 'Tap and z offset', cmd: 'OZNLAB_SETUP STEP=4', home: true,
+    text: 'Homes if needed, heats the nozzle to 150 C, moves over the middle of the bed and taps five times. The tip should be clean. Saving keeps the z offset.' },
+  { n: 5, art: 'pa', title: 'Pressure advance', home: true, form: true,
+    text: 'Load a filament and name it as the slicer does. The nozzle heats, lifts and pulses about 20 cm of filament in the air where it is now, so move over the purge bucket first if there is one. About 2 to 4 minutes.' },
+  { n: 6, art: 'home', title: 'Z homing with the nozzle', cmd: 'OZNLAB_SETUP STEP=6', home: true, optional: true,
+    text: 'Optional: home Z by touching the bed with the nozzle instead of an endstop. The first run is a test that changes nothing. When it works, the lines to change in printer.cfg appear below; these you edit yourself, they touch the Z homing.' },
+  { n: 7, art: 'mesh', title: 'Bed mesh', cmd: 'OZNLAB_SETUP STEP=7', optional: true,
+    text: 'With a probe on the printer, keep it for the mesh. Without one the nozzle is the probe: pick the area once, then measure with the bed and the nozzle at printing temperature.' },
+  { n: 8, art: 'macro', title: 'Print start', cmd: 'OZNLAB_SETUP STEP=8', macros: true,
+    text: 'Three lines in your macros connect the sensor to every print. Klipper reads the macros when it starts, so restart after editing them and the checks below update.' },
+];
+let cur = 1;
+const stepRes = {}, stepOut = {};
+let liveStep = 0;
+function stepDone(n) {
+  if (stepRes[n]) return stepRes[n] === 'ok';
+  return ((S.oz.setup && S.oz.setup.step) || 0) >= n;
+}
+// setup is a one-time job: until step 8 is done it leads the menu and the page opens on it,
+// afterwards it moves to the end of the menu as "Setup again"
+let setupLanded = false;
+const openedOn = location.hash;      // show() rewrites the hash, so remember what the link asked for
+function setupDone() { return ((S.oz.setup && S.oz.setup.step) || 0) >= STEPS.length; }
+function renderSetupNav() {
+  if (!S.oz.setup) return;
+  const done = setupDone(), n = S.oz.setup.step || 0, b = $('navSetup');
+  b.classList.toggle('todo', !done);
+  b.innerHTML = done ? 'Setup again' : 'Setup<small>' + (n ? n + ' of ' + STEPS.length + ' done' : 'not done yet') + '</small>';
+  $('setupNote').style.display = done ? 'none' : '';
+  $('setupNoteText').textContent = n ? 'The setup stopped after step ' + n + ' of ' + STEPS.length + '.' : 'The sensor is not set up yet.';
+  if (!setupLanded) {
+    setupLanded = true;
+    if (!done && !openedOn) { cur = Math.min(n + 1, STEPS.length); show('setup'); renderStep(); }
+  }
+}
+$('setupCont').onclick = () => { cur = Math.min(((S.oz.setup && S.oz.setup.step) || 0) + 1, STEPS.length); show('setup'); renderStep(); };
+function renderSetupSide() {
+  renderSetupNav();
+  $('steps').innerHTML = STEPS.map(st => {
+    const done = stepDone(st.n), fail = stepRes[st.n] === 'fail';
+    return `<li><button data-n="${st.n}" class="${st.n === cur ? 'sel' : ''} ${done ? 'done' : fail ? 'fail' : ''}">`
+      + `<span class="n">${done ? '&#10003;' : st.n}</span><span>${esc(st.title)}${st.optional ? '<br><span class="opt">optional</span>' : ''}</span></button></li>`;
+  }).join('');
+  if (STEPS[cur - 1].macros) renderMacros();
+}
+$('steps').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { cur = +b.dataset.n; renderStep(); } });
+function renderStep() {
+  const st = STEPS[cur - 1];
+  $('stepArt').innerHTML = ART[st.art];
+  $('stepNo').textContent = 'Step ' + st.n + ' of ' + STEPS.length + (st.optional ? ', optional' : '');
+  $('stepTitle').textContent = st.title;
+  $('stepText').textContent = st.text;
+  $('stepSkip').style.display = st.optional ? '' : 'none';
+  $('stepPrev').disabled = cur === 1; $('stepNext').disabled = cur === STEPS.length;
+  $('stepRun').textContent = st.macros ? 'Finish the setup' : stepOut[cur] ? 'Run it again' : 'Run this step';
+  const x = $('stepExtra');
+  if (st.form) {
+    x.innerHTML = `<div class="form"><label for="sFil">Filament</label><input id="sFil" type="text" list="filList" placeholder="as the slicer names it, e.g. PLA">
+      <label for="sTemp">Temperature</label><input id="sTemp" type="number" min="150" max="350" step="5">
+      <label for="sNoz">Nozzle</label><select id="sNoz"><option>0.2</option><option>0.25</option><option selected>0.4</option><option>0.5</option><option>0.6</option><option>0.8</option><option>1.0</option></select></div>`;
+    $('sFil').value = $('paFil').value || ''; $('sTemp').value = $('paTemp').value || 220;
+  } else if (st.count) {
+    x.innerHTML = `<div class="row" style="align-items:baseline"><span class="big" id="pushN">0</span><span class="muted">pushes seen</span></div>`;
+  } else if (st.n === 7) {
+    x.innerHTML = `<div class="row"><button data-x="OZNLAB_MESH_SETUP">Pick the area</button><button data-x="OZNLAB_MESH" data-home="1">Measure the mesh</button><button data-go="mesh" class="ghost">See the mesh</button></div>`;
+  } else if (st.macros) {
+    x.innerHTML = `<p class="hint" style="margin:0 0 6px">In PRINT_START, in place of the line that heats the nozzle (M109). EXTRUDER takes the printing temperature, under the name your macro already uses for it:</p>
+      <div class="snip" id="snipStart">OZNLAB_PRINT_START EXTRUDER={params.EXTRUDER}
+; ... your prime line ...
+OZNLAB_MONITOR<button class="ghost" data-copy="snipStart">Copy</button></div>
+      <p class="hint" style="margin:10px 0 6px">In PRINT_END and in CANCEL_PRINT:</p>
+      <div class="snip" id="snipEnd">OZNLAB_PRINT_END<button class="ghost" data-copy="snipEnd">Copy</button></div>
+      <ul class="ticks" id="ticks" style="margin-top:12px"></ul>
+      <div class="row" style="margin-top:10px"><button data-x="RESTART" data-confirm="Klipper restarts and reads the macros again. Continue?">Restart Klipper to check again</button></div>`;
+    renderMacros();
+  } else x.innerHTML = '';
+  for (const b of x.querySelectorAll('[data-x]')) b.onclick = () => run(b.dataset.x, { home: b.dataset.home, confirm: b.dataset.confirm });
+  for (const b of x.querySelectorAll('[data-go]')) b.onclick = () => show(b.dataset.go);
+  for (const b of x.querySelectorAll('[data-copy]')) b.onclick = () => copyText($(b.dataset.copy).firstChild.textContent, b);
+  renderStepOut(); renderSetupSide(); renderPending();
+}
+function renderMacros() {
+  const t = $('ticks'); if (!t) return;
+  const m = (S.oz.setup && S.oz.setup.macros) || {};
+  const li = (ok, yes, no) => `<li class="${ok ? 'y' : 'n'}">${esc(ok ? yes : no)}</li>`;
+  t.innerHTML = li(m.print_start, 'OZNLAB_PRINT_START is in ' + m.print_start, 'No macro calls OZNLAB_PRINT_START yet')
+    + li(m.monitor, 'OZNLAB_MONITOR is in ' + m.monitor, 'No macro calls OZNLAB_MONITOR yet (the clog and runout watch)')
+    + li(m.print_end, 'OZNLAB_PRINT_END is in ' + m.print_end, 'No macro calls OZNLAB_PRINT_END yet');
+}
+function copyText(text, btn) {
+  const done = () => { const o = btn.textContent; btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = o; }, 1200); };
+  if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(done); return; }
+  const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); done(); } catch (e) {}
+  ta.remove();
+}
+function renderStepOut() {
+  const lines = stepOut[cur] || [], box = $('stepOut');
+  const shown = [];
+  for (const l of lines) {
+    const p = l.match(/^action:prompt_(text|begin) (.*)$/);
+    if (p) { shown.push({ t: p[1] === 'begin' ? '-- ' + p[2] : p[2], c: '' }); continue; }
+    if (/^action:/.test(l) || !l.trim()) continue;
+    const m = l.match(/\[\s*(OK|WARN|FAIL)\s*\]/);
+    shown.push({ t: l, c: m ? m[1] : '' });
+  }
+  const atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 8;
+  box.innerHTML = shown.map(x => `<div class="${x.c}">${esc(x.t)}</div>`).join('');
+  if (atEnd) box.scrollTop = box.scrollHeight;
+  if (STEPS[cur - 1].count && $('pushN')) $('pushN').textContent = lines.filter(l => /^(TAP #|PRESS released)/.test(l)).length;
+}
+function stepCmd(st) {
+  if (!st.form) return st.cmd;
+  const fil = $('sFil').value.trim(), temp = parseInt($('sTemp').value, 10);
+  if (!fil) { toast('warn', 'Name the filament', 'As the slicer names it: PLA, PETG, ASA ...'); $('sFil').focus(); return null; }
+  if (!(temp >= 150 && temp <= 350)) { toast('warn', 'Check the temperature', 'Between 150 and 350 C.'); $('sTemp').focus(); return null; }
+  return 'OZNLAB_SETUP STEP=5 METHOD=auto FILAMENT=' + fil.replace(/\s+/g, '_') + ' TEMP=' + temp + ' NOZZLE=' + $('sNoz').value;
+}
+async function runStep() {
+  const st = STEPS[cur - 1], n = cur, cmd = stepCmd(st);
+  if (!cmd) return;
+  const lines = []; stepOut[n] = lines; liveStep = n; renderStep();
+  const { ok } = await runCapture(cmd, { home: st.home, cold: st.cold }, lines);
+  liveStep = 0;
+  if (ok === null) { delete stepOut[n]; renderStep(); return; }
+  const fail = !ok || lines.some(l => /\[\s*FAIL/.test(l)) || (st.count && !lines.some(l => /^(TAP #|PRESS released)/.test(l)));
+  // a value that only counts after the restart (the drive current): not done until it is checked again
+  const wait = !fail && st.recheck && pendingRows().length > 0;
+  stepRes[n] = fail ? 'fail' : wait ? 'wait' : 'ok';
+  if (cur === n) renderStep(); else renderSetupSide();
+  if (wait) toast('warn', 'Step ' + n + ': save and restart', 'This step checks the new value again after the restart.');
+  else if (fail) toast('err', 'Step ' + n + ' needs another look', st.count ? 'No push was seen. Is the coil close enough to the heatsink?' : 'The lines in the step say what to fix.');
+  else toast('ok', 'Step ' + n + ' done', pendingRows().length ? 'Save and restart to keep what it measured.' : (n < STEPS.length ? 'On to the next step.' : 'The sensor is set up.'));
+}
+$('stepRun').onclick = runStep;
+$('stepPrev').onclick = () => { if (cur > 1) { cur--; renderStep(); } };
+$('stepNext').onclick = () => { if (cur < STEPS.length) { cur++; renderStep(); } };
+$('stepSkip').onclick = () => { if (cur < STEPS.length) { cur++; renderStep(); } };
+function pendingRows() {
+  const cf = S.configfile || {}, items = cf.save_config_pending_items || {}, rows = [];
+  if (!cf.save_config_pending) return rows;
+  for (const sec in items) for (const o in items[sec]) {
+    // the step counter alone is not worth a restart, except the last one: it moves Setup out of the way for good
+    if (o === 'setup_step' && String(items[sec][o]).trim() !== String(STEPS.length)) continue;
+    rows.push('[' + sec + '] ' + o + ': ' + items[sec][o] + (o === 'setup_step' ? '   (setup finished)' : ''));
+  }
+  return rows;
+}
+function renderPending() {
+  const rows = pendingRows(), box = $('stepPending');
+  if (!rows.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="savebox"><b>Waiting to be written to printer.cfg</b><div class="snip" style="margin:8px 0;border:0;padding:0;background:none">${esc(rows.join('\n'))}</div>
+    <div class="row"><button class="primary" id="saveRestart">Save and restart Klipper</button><span class="hint">This page reconnects by itself and carries on.</span></div></div>`;
+  $('saveRestart').onclick = async () => {
+    try { sessionStorage.setItem('oz_after_save', JSON.stringify({ step: cur, t: Date.now() })); } catch (e) {}
+    conAdd('SAVE_CONFIG', 'c');
+    try { await rpc('printer.gcode.script', { script: 'SAVE_CONFIG' }); } catch (e) {}   // the restart cuts the reply
+  };
+}
+// after SAVE_CONFIG restarted Klipper: back to the step, check it again where that means something
+function afterRestart() {
+  let a = null;
+  try { a = JSON.parse(sessionStorage.getItem('oz_after_save') || 'null'); sessionStorage.removeItem('oz_after_save'); } catch (e) {}
+  if (!a || Date.now() - a.t > 180000) return;
+  show('setup'); cur = a.step;
+  const st = STEPS[cur - 1];
+  toast('ok', 'Saved', 'Klipper restarted with the new values.');
+  if (st.recheck) { renderStep(); setTimeout(runStep, 1500); }
+  else { if (cur < STEPS.length) cur++; renderStep(); }
+}
+
+// ================= history (config/oznlab/history.jsonl) =================
+let H = [], histSeen = -1, histTimer = null;
+async function loadHistory() {
+  try {
+    const r = await fetch(httpBase + '/server/files/config/oznlab/history.jsonl', { cache: 'no-store' });
+    H = r.ok ? (await r.text()).split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch (e) { return null; } }).filter(Boolean) : [];
+  } catch (e) { H = []; }
+  renderCards(); renderReports(); drawPaHist();
+}
+const filKey = (f) => String(f || '').toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_|_$/g, '');
+const ago = (t) => { const d = (Date.now() / 1000 - t) / 86400; return d < 1 ? 'today' : d < 2 ? 'yesterday' : Math.round(d) + ' days ago'; };
+const when = (t) => new Date(t * 1000).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+// ================= print view =================
+const monHist = []; let monLast = 0;
+function addMon(m) {
+  for (const p of (m.pts || [])) if (p[0] > monLast) { monHist.push(p); monLast = p[0]; }
+  if (monHist.length && monHist[0][0] > monLast) monHist.length = 0;          // Klipper restarted: its clock too
+  while (monHist.length && monHist[0][0] < monLast - 1800) monHist.shift();
+}
+function renderMonState() {
+  const m = S.oz.mon, el = $('monState');
+  if (!m) { el.textContent = printing() ? 'The watch is off in this print. It starts with OZNLAB_MONITOR, the last line of PRINT_START.' : 'No print running. The watch starts with OZNLAB_MONITOR, the last line of PRINT_START.'; return; }
+  let t = m.state === 'learning' ? 'Learning the normal level of this print (' + m.learned + ' s of extrusion so far).' : 'Watching.';
+  if (m.passive) t = 'Passive: the pressure never matched the start of print measurement, nothing is judged in this print.';
+  t += ' Normal level ' + m.k.toFixed(2) + ' x the reference, ' + m.clog + ' clog, ' + m.runout + ' runout. No decisions below z ' + m.min_z + ' mm.';
+  el.textContent = t;
+  if (m.log) { const a = document.createElement('a'); a.href = httpBase + '/server/files/config/' + m.log; a.textContent = ' Log of this print'; a.target = '_blank'; el.appendChild(a); }
+}
+function drawPrint() {
+  const cv = setupCanvas($('pchart')); if (!cv) return; const { g, w, h } = cv;
+  const W = +$('pwin').value, t1 = monLast, t0 = t1 - W;
+  const pts = monHist.filter(p => p[0] >= t0);
+  const L = 54, R = 46, T = 8, gap = 18, B = 20, ph = (h - T - B - gap) * 0.68, rh = (h - T - B - gap) - ph, ry0 = T + ph + gap;
+  const X = (t) => L + (t - t0) / W * (w - L - R);
+  g.fillStyle = css('--dim');
+  if (pts.length < 2) { g.fillText('The measured and the expected pressure appear here while the watch runs.', L, T + 24); return; }
+  let hi = 1, lo = 0;
+  for (const p of pts) { hi = Math.max(hi, p[1], p[2]); lo = Math.min(lo, p[1]); }
+  hi *= 1.08;
+  const Y = (v) => T + (hi - v) / (hi - lo) * ph;
+  const m = S.oz.mon || { clog_ratio: 2, runout_ratio: 0.25 };
+  const rmax = Math.max(2.6, m.clog_ratio + 0.4), RY = (r) => ry0 + (rmax - Math.max(0, Math.min(rmax, r))) / rmax * rh;
+  // grid and labels
+  g.strokeStyle = css('--rule'); g.lineWidth = 1; g.beginPath();
+  const st = niceStep(hi - lo, 4);
+  for (let v = Math.ceil(lo / st) * st; v <= hi; v += st) { g.moveTo(L, Y(v)); g.lineTo(w - R, Y(v)); g.fillText(Math.round(v) + ' Hz', 4, Y(v) + 4); }
+  for (const r of [0, 1, 2]) { g.moveTo(L, RY(r)); g.lineTo(w - R, RY(r)); g.fillText(r + ' x', 22, RY(r) + 4); }
+  g.stroke();
+  const tst = W > 600 ? 300 : W > 120 ? 60 : 15;
+  for (let k = 0; k <= W; k += tst) { const x = X(t1 - k); g.fillText(k ? '-' + (k >= 60 ? (k / 60) + ' min' : k + ' s') : 'now', x - 14, h - 4); }
+  // layer changes: a tick on the top edge, the current height on the right
+  g.fillStyle = css('--dim');
+  for (let i = 1; i < pts.length; i++) if (pts[i][5] > pts[i - 1][5] + 0.01) g.fillRect(X(pts[i][0]), T, 1, 6);
+  g.fillText('z ' + pts[pts.length - 1][5].toFixed(2), w - R + 4, T + 12);
+  // measured, then the expected level dashed over it
+  g.strokeStyle = css('--sig'); g.lineWidth = 1.5; g.beginPath();
+  pts.forEach((p, i) => { i ? g.lineTo(X(p[0]), Y(p[1])) : g.moveTo(X(p[0]), Y(p[1])); }); g.stroke();
+  g.save(); g.setLineDash([5, 4]); g.strokeStyle = css('--cmd'); g.lineWidth = 1.5; g.beginPath();
+  pts.forEach((p, i) => { i ? g.lineTo(X(p[0]), Y(p[2])) : g.moveTo(X(p[0]), Y(p[2])); }); g.stroke(); g.restore();
+  // ratio lane with the limits
+  g.save(); g.setLineDash([4, 4]); g.strokeStyle = css('--bad'); g.beginPath();
+  for (const r of [m.clog_ratio, m.runout_ratio]) { g.moveTo(L, RY(r)); g.lineTo(w - R, RY(r)); }
+  g.stroke(); g.restore();
+  g.fillStyle = css('--bad'); g.fillText('clog', w - R + 4, RY(m.clog_ratio) + 4); g.fillText('runout', w - R + 4, RY(m.runout_ratio) + 4);
+  g.strokeStyle = css('--text'); g.lineWidth = 1.5; g.beginPath(); let on = false;
+  for (const p of pts) { if (p[3] == null) { on = false; continue; } const x = X(p[0]), y = RY(p[3]); on ? g.lineTo(x, y) : g.moveTo(x, y); on = true; }
+  g.stroke();
+  g.fillStyle = css('--dim'); g.fillText('pressure against normal (judged moments only)', L + 4, ry0 - 4);
+}
+setInterval(() => { if (curView === 'print') drawPrint(); }, 500);
+$('pwin').onchange = drawPrint;
+
+function renderReports() {
+  const rows = H.filter(h => h.kind === 'print').reverse();
+  $('repCount').textContent = rows.length ? rows.length + ' prints' : '';
+  const tb = $('reports').querySelector('tbody');
+  if (!rows.length) { tb.innerHTML = '<tr><td colspan="7" class="empty">No print report yet. One is written at the end of every print that ran OZNLAB_PRINT_START.</td></tr>'; return; }
+  tb.innerHTML = rows.slice(0, 100).map((r, i) => {
+    const mo = r.monitor || {}, n = r.notes || {};
+    const watch = r.monitor ? ((mo.clog || mo.runout) ? '<span class="bad">' + mo.clog + ' clog, ' + mo.runout + ' runout</span>' : mo.steady != null ? 'steady ' + Math.round(100 * mo.steady) + ' %' : 'no events') : '<span class="muted">off</span>';
+    return `<tr class="click" data-i="${i}"><td>${esc(when(r.time))}</td><td class="l">${esc(r.file || '-')}</td><td>${r.minutes != null ? Math.round(r.minutes) + ' min' : '-'}</td><td>${esc(r.filament || '-')}</td>`
+      + `<td>${esc((n.tap || '-').split(' (')[0])}</td><td>${esc((n.pa || '-').split(' (')[0])}</td><td>${watch}${r.end && r.end !== 'complete' ? ' <span class="warn">' + esc(r.end) + '</span>' : ''}</td></tr>`;
+  }).join('');
+  for (const tr of tb.querySelectorAll('tr.click')) tr.onclick = () => openReport(rows[+tr.dataset.i]);
+}
+async function openReport(r) {
+  $('repTitle').textContent = (r.file || 'Print') + ', ' + when(r.time);
+  $('repText').textContent = 'loading ...';
+  const mo = r.monitor || {};
+  const a = $('repCsv');
+  if (mo.log) { a.href = httpBase + '/server/files/config/' + mo.log; a.textContent = 'Clog watch log (csv)'; } else { a.removeAttribute('href'); a.textContent = ''; }
+  $('repDlg').showModal();
+  let text = null;
+  if (r.report) { try { const x = await fetch(httpBase + '/server/files/config/' + r.report, { cache: 'no-store' }); if (x.ok) text = (await x.json()).text; } catch (e) {} }
+  if (!text) text = Object.entries(r.notes || {}).map(([k, v]) => k + ': ' + v).concat(r.events || []).join('\n');
+  $('repText').textContent = text;
+}
+$('repClose').onclick = () => $('repDlg').close();
+
+// ================= filaments =================
+function filamentData() {
+  const F = {};
+  const get = (n) => { const k = filKey(n); return F[k] || (F[k] = { name: k, pa: {}, flow: null, retract: null, temp: null }); };
+  const sv = S.oz.saved || {};
+  for (const p of (sv.pa_auto || [])) get(p.filament).pa[p.nozzle || 'any'] = { pa: p.pa, temp: p.temp, time: null };
+  for (const h of H) {
+    if (!h.filament || h.error) continue;
+    const f = get(h.filament);
+    if (h.kind === 'pa_auto' && h.saved) {
+      const k = h.nozzle || 'any', c = f.pa[k];
+      if (c && Math.abs(c.pa - h.pa) < 1e-4) c.time = h.time;           // the saved value, and when it was measured
+    }
+    if (h.kind === 'max_flow') f.flow = h;
+    if (h.kind === 'retract') f.retract = h;
+    if (h.kind === 'temp_scan') f.temp = h;
+  }
+  return Object.values(F).sort((a, b) => a.name.localeCompare(b.name));
+}
+function renderCards() {
+  const box = $('cards'); if (!box) return;
+  const fs = filamentData();
+  if (!fs.length) { box.innerHTML = '<div class="empty">Nothing measured yet. Run PA auto or one of the filament tests.</div>'; renderPhSelect(fs); return; }
+  const age = (t) => t ? `<span class="age ${Date.now() / 1000 - t > 30 * 86400 ? 'old' : ''}">${ago(t)}</span>` : '<span class="age">date unknown</span>';
+  box.innerHTML = fs.map(f => {
+    const pas = Object.entries(f.pa).sort();
+    const rows = pas.map(([noz, p]) => `<dt>PA, ${noz === 'any' ? 'any nozzle' : noz + ' mm'}</dt><dd>${p.pa.toFixed(4)}${p.temp ? ' at ' + p.temp + ' C' : ''}<br>${age(p.time)}</dd>`).join('')
+      + (f.flow ? `<dt>Max flow</dt><dd>${f.flow.flow} mm3/s<br>${age(f.flow.time)}</dd>` : '')
+      + (f.retract ? `<dt>Retraction</dt><dd>${f.retract.length != null ? f.retract.length + ' mm at ' + f.retract.speed + ' mm/s' : 'none found'}<br>${age(f.retract.time)}</dd>` : '')
+      + (f.temp ? `<dt>Temperature</dt><dd>about ${f.temp.knee} C<br>${age(f.temp.time)}</dd>` : '');
+    return `<div class="card"><h3>${esc(f.name)}</h3><dl>${rows || '<dt>nothing saved</dt><dd></dd>'}</dl><div class="row" style="margin-top:auto"><button data-fil="${esc(f.name)}">Measure PA again</button></div></div>`;
+  }).join('');
+  for (const b of box.querySelectorAll('[data-fil]')) b.onclick = () => { $('paFil').value = b.dataset.fil; show('pa'); };
+  renderPhSelect(fs);
+}
+function renderPhSelect(fs) {
+  const names = [...new Set(H.filter(h => h.kind === 'pa_auto' && h.filament).map(h => filKey(h.filament)))].sort();
+  const sel = $('phFil'), was = sel.value;
+  sel.innerHTML = names.map(n => `<option>${esc(n)}</option>`).join('') || '<option value="">no runs yet</option>';
+  if (names.includes(was)) sel.value = was;
+  drawPaHist();
+}
+$('phFil').onchange = drawPaHist;
+function drawPaHist() {
+  const cv = setupCanvas($('phist')); if (!cv) return; const { g, w, h } = cv;
+  const f = $('phFil').value;
+  const runs = H.filter(x => x.kind === 'pa_auto' && filKey(x.filament) === f && !x.error && x.pa != null);
+  g.fillStyle = css('--dim');
+  if (!runs.length) { g.fillText('No PA auto run of this filament in the history yet.', 12, 24); return; }
+  const L = 52, R = 14, T = 12, B = 24;
+  const ta = runs[0].time, tb = Math.max(runs[runs.length - 1].time, ta + 86400);
+  const pas = runs.map(r => r.pa), hi = Math.max(...pas) * 1.15, lo = Math.max(0, Math.min(...pas) * 0.8);
+  const X = (t) => L + (t - ta) / (tb - ta) * (w - L - R), Y = (v) => T + (hi - v) / (hi - lo || 1) * (h - T - B);
+  g.strokeStyle = css('--rule'); g.beginPath();
+  const st = niceStep(hi - lo, 4);
+  for (let v = Math.ceil(lo / st) * st; v <= hi; v += st) { g.moveTo(L, Y(v)); g.lineTo(w - R, Y(v)); g.fillText(v.toFixed(3), 4, Y(v) + 4); }
+  g.stroke();
+  g.fillText(new Date(ta * 1000).toLocaleDateString(), L, h - 6);
+  const lab = new Date(tb * 1000).toLocaleDateString(); g.fillText(lab, w - R - g.measureText(lab).width, h - 6);
+  const nozzles = [...new Set(runs.map(r => r.nozzle || 'any'))].sort();
+  const col = (n) => kColor(nozzles.indexOf(n), 0, Math.max(1, nozzles.length - 1));
+  for (const n of nozzles) {
+    const rs = runs.filter(r => (r.nozzle || 'any') === n);
+    g.strokeStyle = col(n); g.globalAlpha = 0.5; g.beginPath(); rs.forEach((r, i) => i ? g.lineTo(X(r.time), Y(r.pa)) : g.moveTo(X(r.time), Y(r.pa))); g.stroke(); g.globalAlpha = 1;
+    g.fillStyle = col(n); for (const r of rs) { g.beginPath(); g.arc(X(r.time), Y(r.pa), r.in_print ? 3 : 4.5, 0, 7); g.fill(); }
+    const last = rs[rs.length - 1]; g.fillText((n === 'any' ? 'any nozzle' : n + ' mm') + '  ' + last.pa.toFixed(4), Math.min(X(last.time) + 8, w - 120), Y(last.pa) - 8);
+  }
+}
+
+// ================= tap repeatability =================
+function renderTapRep() {
+  const cv = setupCanvas($('taphist')); if (!cv) return; const { g, w, h } = cv;
+  const ev = ((S.oz.viz && S.oz.viz.events) || []).filter(e => e.kind === 'taps' && e.zs && e.zs.length > 1);
+  const e = ev[ev.length - 1];
+  g.fillStyle = css('--dim');
+  if (!e) { g.fillText('Tap 10 times to see the spread here.', 10, 24); ['tr_span', 'tr_sd', 'tr_tol'].forEach(id => { $(id).textContent = '-'; }); return; }
+  const um = e.zs.map(z => (z - e.median) * 1000), span = Math.max(...um) - Math.min(...um);
+  $('tr_span').textContent = span.toFixed(1) + ' um'; $('tr_sd').textContent = (e.sd * 1000).toFixed(1) + ' um';
+  $('tr_tol').textContent = 'sd ' + (e.tol * 1000).toFixed(0) + ' um';
+  $('tr_sd').className = e.ok ? 'ok' : 'bad';
+  // one dot per tap on a micrometre axis around the median, stacked where they coincide
+  const lim = Math.max(25, ...um.map(Math.abs)) * 1.15, L = 20, R = 20, y0 = h - 30, X = (v) => L + (v + lim) / (2 * lim) * (w - L - R);
+  g.strokeStyle = css('--rule'); g.beginPath(); g.moveTo(L, y0); g.lineTo(w - R, y0); g.stroke();
+  for (const v of [-lim, -lim / 2, 0, lim / 2, lim]) { g.fillRect(X(v), y0 - 3, 1, 6); const t = (v > 0 ? '+' : '') + v.toFixed(0) + ' um'; g.fillText(t, X(v) - g.measureText(t).width / 2, y0 + 18); }
+  g.fillStyle = css('--okband'); g.fillRect(X(-e.tol * 1000), 8, X(e.tol * 1000) - X(-e.tol * 1000), y0 - 8);
+  const stack = {};
+  for (const v of um) {
+    const b = Math.round(v / (2 * lim / 40)); stack[b] = (stack[b] || 0) + 1;
+    g.fillStyle = e.ok ? css('--sig') : css('--bad');
+    g.beginPath(); g.arc(X(v), y0 - 8 - (stack[b] - 1) * 11, 4.5, 0, 7); g.fill();
+  }
+}
+
+// ================= spectrum =================
+function fft(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) { let bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit; if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; } }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const a = i + k, b = a + len / 2, tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+        const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
+      }
+    }
+  }
+}
+let specCache = { t: 0, data: null };
+function drawSpectrum(g, w, h) {
+  const now = performance.now();
+  if (now - specCache.t > 250 || !specCache.data) {
+    specCache.t = now; specCache.data = null;
+    const W = +$('win').value, pts = hist.filter(p => p[0] > lastT - W);
+    if (pts.length >= 64) {
+      const dts = []; for (let i = 1; i < pts.length; i++) dts.push(pts[i][0] - pts[i - 1][0]);
+      const fs = 1 / median(dts);
+      let n = 64; while (n * 2 <= pts.length && n < 8192) n *= 2;
+      const seg = pts.slice(-n).map(p => p[1]), mean = seg.reduce((a, b) => a + b, 0) / n;
+      const re = new Float64Array(n), im = new Float64Array(n); let wsum = 0;
+      for (let i = 0; i < n; i++) { const wv = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (n - 1)); re[i] = (seg[i] - mean) * wv; wsum += wv; }
+      fft(re, im);
+      const mag = []; for (let k = 1; k < n / 2; k++) mag.push([k * fs / n, 2 * Math.hypot(re[k], im[k]) / wsum]);
+      specCache.data = { fs, n, mag };
+    }
+  }
+  const d = specCache.data, L = 58, R = 10, T = 10, B = 24;
+  g.fillStyle = css('--dim');
+  if (!d) { g.fillText('The spectrum needs a few seconds of samples.', L, T + 20); return; }
+  $('fftNote').textContent = d.n + ' samples at ' + Math.round(d.fs) + ' /s: it shows up to ' + Math.round(d.fs / 2) + ' Hz. A fan or a motor faster than that folds back onto a lower frequency.';
+  const fmax = d.fs / 2, amax = Math.max(1, ...d.mag.map(m => m[1])) * 1.15;
+  const X = (f) => L + f / fmax * (w - L - R), Y = (a) => T + (1 - a / amax) * (h - T - B);
+  g.strokeStyle = css('--rule'); g.lineWidth = 1; g.beginPath();
+  const sa = niceStep(amax, 4); for (let a = 0; a <= amax; a += sa) { g.moveTo(L, Y(a)); g.lineTo(w - R, Y(a)); g.fillText(a.toFixed(a < 10 ? 1 : 0) + ' Hz', 4, Y(a) + 4); }
+  const sf = niceStep(fmax, 6); for (let f = 0; f <= fmax; f += sf) { g.moveTo(X(f), T); g.lineTo(X(f), h - B); g.fillText(f.toFixed(0) + ' Hz', X(f) - 10, h - 6); }
+  g.stroke();
+  g.strokeStyle = css('--sig'); g.lineWidth = 1.5; g.beginPath();
+  d.mag.forEach((m, i) => { i ? g.lineTo(X(m[0]), Y(m[1])) : g.moveTo(X(m[0]), Y(m[1])); }); g.stroke();
+  // the three strongest peaks that stand well above the floor
+  const floor = median(d.mag.map(m => m[1]));
+  const peaks = d.mag.filter((m, i) => i > 0 && i < d.mag.length - 1 && m[1] > d.mag[i - 1][1] && m[1] >= d.mag[i + 1][1] && m[1] > 6 * floor && m[0] > 0.5)
+    .sort((a, b) => b[1] - a[1]).slice(0, 3);
+  g.fillStyle = css('--text');
+  for (const p of peaks) { const t = p[0].toFixed(1) + ' Hz'; g.fillText(t, Math.min(X(p[0]) + 4, w - R - 50), Y(p[1]) - 4); }
+}
+$('mode').onchange = () => {
+  const f = $('mode').value === 'fft';
+  $('legSig').style.display = f ? 'none' : ''; $('legFft').style.display = f ? '' : 'none';
+  for (const id of ['smooth', 'scale', 'unit', 'flip']) $(id).disabled = f;
+};
+
+// ================= is everything OK? =================
+$('quick').onclick = async () => {
+  const { ok, lines } = await runCapture('OZNLAB_CHECK');
+  if (ok === null) return;
+  const pick = (k) => lines.filter(l => new RegExp('\\[\\s*' + k).test(l)).map(l => l.replace(/^\s*\[\s*\w+\s*\]\s*/, ''));
+  const fails = pick('FAIL'), warns = pick('WARN');
+  const i = S.oz.info || {}, sv = S.oz.saved || {}, facts = [];
+  if (i.noise != null) facts.push('noise ' + i.noise + ' Hz');
+  if (sv.last_tap_z != null) facts.push('z offset ' + sv.last_tap_z.toFixed(3) + ' mm');
+  if (i.sens) facts.push(i.sens + ' Hz/um at ' + (i.temp != null ? i.temp + ' C' : 'this temperature'));
+  let kind, title;
+  const cap = (x) => x.charAt(0).toUpperCase() + x.slice(1);
+  if (!ok) { kind = 'bad'; title = 'The check could not run, see the console.'; }
+  else if (fails.length) { kind = 'bad'; title = fails.length + (fails.length > 1 ? ' problems. ' : ' problem. ') + cap(fails[0]); }
+  else if (warns.length) { kind = 'warn'; title = 'It works, with ' + warns.length + (warns.length > 1 ? ' warnings. ' : ' warning. ') + cap(warns[0]); }
+  else { kind = 'ok'; title = 'Everything checks out.'; }
+  const b = $('quickRes'); b.className = 'banner ' + kind; b.style.display = '';
+  b.innerHTML = `<div class="grow"><b></b><div class="hint"></div></div>`;
+  b.querySelector('b').textContent = title; b.querySelector('.hint').textContent = facts.join(', ');
+  if (ok) renderChecks(lines);
+  toast(kind === 'bad' ? 'err' : kind, title, facts.join(', '), 9000);
+};
+
+// ================= support bundle =================
+$('bundleBtn').onclick = async () => {
+  if (!(await preflight('OZNLAB_BUNDLE', {}))) return;
+  $('bundleOut').textContent = 'Packing ...';
+  try {   // this page's console goes in too: Klipper does not keep it anywhere
+    const fd = new FormData();
+    fd.append('root', 'config'); fd.append('path', 'oznlab/bundles');
+    fd.append('file', new Blob([conLines.map(l => (l.k === 'c' ? '> ' : '') + l.text).join('\n') + '\n'], { type: 'text/plain' }), 'console.txt');
+    await fetch(httpBase + '/server/files/upload', { method: 'POST', body: fd });
+  } catch (e) {}
+  const ok = await run('OZNLAB_BUNDLE');
+  $('bundleOut').textContent = ok ? 'Packed, the download link follows in a moment.' : '';
+};
+function showBundle() {
+  const b = S.oz.bundle; if (!b || !$('bundleOut')) return;
+  const url = httpBase + '/server/files/config/' + b.file;
+  $('bundleOut').innerHTML = `<a href="${esc(url)}" download>Download ${esc(b.file.split('/').pop())}</a>, made ${esc(when(b.time))}. It is also in the config folder, ${esc(b.file)}.`;
+}
+
+// ================= graph as an image =================
+$('snap').onclick = () => {
+  const src = $('live'), d = window.devicePixelRatio || 1, head = 64;
+  const c = document.createElement('canvas'); c.width = src.width; c.height = src.height + head * d;
+  const g = c.getContext('2d');
+  g.fillStyle = css('--sheet'); g.fillRect(0, 0, c.width, c.height);
+  g.drawImage(src, 0, head * d);
+  g.scale(d, d);
+  const i = S.oz.info || {}, e = S.extruder || {};
+  g.fillStyle = css('--text'); g.font = '600 17px ' + css('--head');
+  g.fillText('OznLab Sensor' + (S.oz.version ? ' v' + S.oz.version : '') + ($('mode').value === 'fft' ? ', spectrum' : ''), 14, 24);
+  g.font = '13px ' + css('--font'); g.fillStyle = css('--dim');
+  g.fillText([new Date().toLocaleString(), e.temperature != null ? 'nozzle ' + Math.round(e.temperature) + ' C' : null, i.noise != null ? 'noise ' + i.noise + ' Hz' : null,
+    i.sens ? i.sens + ' Hz/um' : null, i.filament ? 'filament ' + i.filament : null, e.pressure_advance != null ? 'PA ' + e.pressure_advance.toFixed(4) : null,
+    S.oz.rate ? S.oz.rate + ' samples/s' : null, 'window ' + $('win').value + ' s'].filter(Boolean).join('    '), 14, 46);
+  c.toBlob((blob) => {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = 'oznlab_' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.png';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  });
+};
+
+function redrawAll() { drawFalls(); drawLadder(); drawSens(); renderMesh(); drawPrint(); drawPaHist(); renderTapRep(); }
+window.addEventListener('resize', redrawAll);
+function frame() { if (!paused) drawLive(); requestAnimationFrame(frame); }
+
+renderStep();
+show((location.hash || '#live').slice(1).replace(/[^a-z]/g, '') || 'live');
+renderPA(); renderTaps();
+connect();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
