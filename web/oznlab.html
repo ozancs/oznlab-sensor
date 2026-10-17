@@ -107,20 +107,20 @@ p.lead { margin: 0 0 12px; color: var(--dim); max-width: 70ch; }
 #scope .head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
 #scope h2 { font-size: 20px; font-weight: 800; white-space: nowrap; }
 #scope .head label { color: var(--dim); font-size: 13px; display: flex; gap: 6px; align-items: center; }
-#scope { display: flex; gap: 16px; align-items: stretch; }
+#scope { display: flex; gap: 16px; align-items: flex-start; }
 #scope .fig { flex: 1; min-width: 0; }
 #scope canvas { width: 100%; height: 320px; display: block; border-left: 2px solid var(--text); border-bottom: 2px solid var(--text); }
 body.compact #scope canvas { height: 200px; }
 /* the camera: a square the height of the plot, same frame as the plot */
-#cam { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; width: 330px; }
-body.compact #cam { width: 210px; }
-#cam .pic { position: relative; width: 100%; aspect-ratio: 1; background: var(--term); border: 1px solid var(--rule); overflow: hidden; display: grid; place-items: center; }
-@media (max-width: 1100px) { #cam, body.compact #cam { width: 200px; } }
-#cam img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* a square as tall as the plot block next to it (the script measures the block and sets --camh) */
+#cam { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; width: var(--camh, 320px); }
+#cam .pic { position: relative; width: var(--camh, 320px); height: var(--camh, 320px); background: var(--term); border: 1px solid var(--rule); overflow: hidden; }
+#cam select { width: 100%; }
+#cam img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 #cam img.contain { object-fit: contain; }
 #cam .pic .hint { position: absolute; inset: auto 8px 6px; text-align: center; text-shadow: 0 1px 2px #000; pointer-events: none; }
 #cam select { font-size: 13px; padding: 3px 6px; }
-@media (max-width: 760px) { #scope { flex-direction: column; } #cam, body.compact #cam { width: 100%; } #cam .pic { aspect-ratio: 16 / 9; } }
+@media (max-width: 760px) { #scope { flex-direction: column; } #cam, #cam .pic { width: 100%; } #cam .pic { height: auto; aspect-ratio: 16 / 9; } }
 .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--dim); margin-top: 8px; }
 .sw { display: inline-block; width: 20px; border-top: 2px solid; vertical-align: middle; margin-right: 6px; }
 .readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0; background: var(--sheet); border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
@@ -624,7 +624,7 @@ async function loadCams() {
   let pick = 0;
   try { const want = localStorage.getItem('oznlab_cam'); const i = cams.findIndex(c => c.name === want); if (i >= 0) pick = i; } catch (e) {}
   sel.value = pick; showCam(pick);
-  requestAnimationFrame(redrawAll);
+  requestAnimationFrame(() => { fitCam(); redrawAll(); });
 }
 function showCam(i) {
   const c = cams[i], img = $('camImg'); if (!c) return;
@@ -643,6 +643,14 @@ function showCam(i) {
   snap(); camTimer = setInterval(snap, 600);
 }
 $('camSel').onchange = () => showCam(+$('camSel').value);
+// the square follows the plot block's height, whatever the window and the view do to it
+function fitCam() {
+  if ($('cam').style.display === 'none') return;
+  const sel = $('camSel'), extra = sel.style.display === 'none' ? 0 : sel.offsetHeight + 6;
+  const h = Math.max(120, Math.round($('scope').querySelector('.fig').getBoundingClientRect().height - extra));
+  document.documentElement.style.setProperty('--camh', h + 'px');
+}
+new ResizeObserver(fitCam).observe($('scope').querySelector('.fig'));
 
 // the keep-alive that makes the module stream samples. Over the module's own endpoint it is
 // answered at once, also mid-print; on a module before v0.11.9 that endpoint does not exist and
