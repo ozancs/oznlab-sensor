@@ -24,6 +24,9 @@
   --tap: #f08acb;
   --raw: #3b4560;
   --band: rgba(139,168,255,.09);
+  --sig-tint: rgba(139,168,255,.10);
+  --sig-hi: #a9bfff;       /* hovered primary */
+  --sig-ink: #d6dfff;      /* button text: a step towards the signal colour */
   --okband: rgba(111,207,138,.12);
   --on-ink: #17191a;
   --term: #0f1011;
@@ -39,20 +42,22 @@ body { margin: 0; background: var(--page); color: var(--text); font: 15px/1.5 va
   grid-template-rows: auto 1fr auto; grid-template-columns: 188px minmax(0, 1fr); grid-template-areas: "top top" "nav main" "con con";
   font-variant-numeric: tabular-nums; }
 button, select, input { font: inherit; color: var(--text); }
-button { background: var(--sheet); border: 1px solid var(--rule); border-radius: 3px; padding: 6px 12px 5px; cursor: pointer; }
-button:hover:not(:disabled) { border-color: var(--text); }
+button { background: var(--raised); border: 1px solid var(--rule); border-radius: 4px; padding: 6px 12px 5px; cursor: pointer; color: var(--sig-ink); font-weight: 600;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.04); transition: border-color .12s, background-color .12s; }
+button:hover:not(:disabled) { border-color: var(--sig); background: var(--sig-tint); }
+button:active:not(:disabled) { background: var(--band); }
 button:disabled { opacity: .4; cursor: not-allowed; }
-button.primary { background: var(--text); color: var(--on-ink); border-color: var(--text); font-weight: 700; }
-button.primary:hover:not(:disabled) { background: var(--sig); border-color: var(--sig); }
-button.ghost { background: transparent; border-color: transparent; text-decoration: underline; text-decoration-color: var(--rule); text-underline-offset: 3px; }
-button.ghost:hover:not(:disabled) { border-color: transparent; text-decoration-color: var(--text); }
+button.primary { background: var(--sig); color: var(--on-ink); border-color: var(--sig); font-weight: 700; box-shadow: none; }
+button.primary:hover:not(:disabled) { background: var(--sig-hi); border-color: var(--sig-hi); }
+button.ghost { background: transparent; border-color: transparent; box-shadow: none; color: var(--text); font-weight: 600; text-decoration: underline; text-decoration-color: var(--rule); text-underline-offset: 3px; }
+button.ghost:hover:not(:disabled) { border-color: transparent; background: transparent; text-decoration-color: var(--sig); color: var(--sig-ink); }
 button.on { color: var(--sig); text-decoration-color: var(--sig); }
 select, input[type=text], input[type=number] { background: var(--sheet); border: 1px solid var(--rule); border-radius: 3px; padding: 5px 8px 4px; }
 :focus-visible { outline: 2px solid var(--sig); outline-offset: 2px; }
 a { color: var(--sig); }
 
 /* status line */
-#top { grid-area: top; display: flex; align-items: stretch; gap: 0; padding: 0 18px; border-bottom: 2px solid var(--text); background: var(--sheet); flex-wrap: wrap; }
+#top { grid-area: top; display: flex; align-items: stretch; gap: 0; padding: 0 18px; border-bottom: 2px solid var(--sig); background: var(--sheet); flex-wrap: wrap; }
 #brand { font: 800 19px/1 var(--head); letter-spacing: -.01em; display: flex; align-items: center; gap: 9px; padding: 12px 22px 10px 0; }
 #brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); }
 #brand .dot.live { background: var(--ok); }
@@ -60,7 +65,7 @@ a { color: var(--sig); }
 .stat small { color: var(--dim); font-size: 12px; }
 .stat b { font: 700 15px var(--head); }
 .axes span { display: inline-block; width: 18px; text-align: center; border-radius: 2px; margin-right: 2px; font: 700 12px/18px var(--head); }
-.axes span.h { background: var(--text); color: var(--on-ink); }
+.axes span.h { background: var(--sig); color: var(--on-ink); }
 .axes span:not(.h) { box-shadow: inset 0 0 0 1.5px var(--warn); color: var(--warn); }
 #running { margin-left: auto; color: var(--sig); font: 700 14px var(--head); display: none; align-items: center; gap: 8px; padding: 0 14px; }
 #running::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--sig); animation: pulse 1.2s ease-in-out infinite; }
@@ -69,11 +74,18 @@ a { color: var(--sig); }
 #running[style*="flex"] + #quick { margin-left: 0; }
 @media (prefers-reduced-motion: reduce) { #running::before { animation: none; } }
 
+/* something is wrong: one band between the status line and the page */
+#alert { grid-column: 1 / -1; display: flex; gap: 14px; align-items: center; padding: 10px 18px; background: var(--sheet); border-bottom: 1px solid var(--rule); border-left: 6px solid var(--bad); }
+#alert b { font: 700 15px var(--head); display: block; }
+#alert .hint { white-space: pre-wrap; max-width: 90ch; }
+body { grid-template-rows: auto auto 1fr auto; grid-template-areas: "top top" "alert alert" "nav main" "con con"; }
+#alert { grid-area: alert; }
+
 /* navigation */
 nav { grid-area: nav; padding: 16px 0 14px; display: flex; flex-direction: column; gap: 0; }
-nav button { text-align: left; background: transparent; border: 0; border-radius: 0; padding: 8px 18px 7px; color: var(--dim); font-weight: 600; border-left: 3px solid transparent; }
-nav button:hover:not(:disabled) { color: var(--text); }
-nav button.sel { color: var(--text); border-left-color: var(--text); }
+nav button { text-align: left; background: transparent; border: 0; border-radius: 0; box-shadow: none; padding: 8px 18px 7px; color: var(--dim); font-weight: 600; border-left: 3px solid transparent; }
+nav button:hover:not(:disabled) { color: var(--text); background: var(--sig-tint); }
+nav button.sel { color: var(--text); border-left-color: var(--sig); background: var(--sig-tint); }
 nav .foot { margin-top: auto; color: var(--dim); font-size: 12px; padding: 8px 18px; order: 100; }
 /* setup is done once: first in the list until it is finished, then quietly at the end */
 #navSetup { order: 99; }
@@ -82,7 +94,7 @@ nav .foot { margin-top: auto; color: var(--dim); font-size: 12px; padding: 8px 1
 .setupnote { display: flex; gap: 14px; align-items: center; border: 1.5px solid var(--warn); border-left-width: 6px; border-radius: 3px; padding: 10px 14px; background: var(--sheet); }
 
 main { grid-area: main; overflow: auto; padding: 18px 22px 28px 4px; display: flex; flex-direction: column; gap: 18px; min-height: 0; }
-.panel { background: var(--sheet); border: 1px solid var(--rule); border-radius: 4px; padding: 16px 18px; }
+.panel { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 16px 18px; box-shadow: 0 1px 0 rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.025); }
 h2 { font: 700 18px/1.25 var(--head); margin: 0 0 4px; letter-spacing: -.005em; }
 p.lead { margin: 0 0 12px; color: var(--dim); max-width: 70ch; }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -91,12 +103,24 @@ p.lead { margin: 0 0 12px; color: var(--dim); max-width: 70ch; }
 .ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
 
 /* the plot: the one loud thing, framed like a datasheet figure */
-#scope { padding: 12px 16px 12px; border: 0; border-top: 4px solid var(--text); border-radius: 0; }
+#scope { padding: 12px 16px 12px; border: 0; border-top: 4px solid var(--sig); border-radius: 0 0 6px 6px; }
 #scope .head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
 #scope h2 { font-size: 20px; font-weight: 800; white-space: nowrap; }
 #scope .head label { color: var(--dim); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+#scope { display: flex; gap: 16px; align-items: stretch; }
+#scope .fig { flex: 1; min-width: 0; }
 #scope canvas { width: 100%; height: 320px; display: block; border-left: 2px solid var(--text); border-bottom: 2px solid var(--text); }
 body.compact #scope canvas { height: 200px; }
+/* the camera: a square the height of the plot, same frame as the plot */
+#cam { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; width: 330px; }
+body.compact #cam { width: 210px; }
+#cam .pic { position: relative; width: 100%; aspect-ratio: 1; background: var(--term); border: 1px solid var(--rule); overflow: hidden; display: grid; place-items: center; }
+@media (max-width: 1100px) { #cam, body.compact #cam { width: 200px; } }
+#cam img { width: 100%; height: 100%; object-fit: cover; display: block; }
+#cam img.contain { object-fit: contain; }
+#cam .pic .hint { position: absolute; inset: auto 8px 6px; text-align: center; text-shadow: 0 1px 2px #000; pointer-events: none; }
+#cam select { font-size: 13px; padding: 3px 6px; }
+@media (max-width: 760px) { #scope { flex-direction: column; } #cam, body.compact #cam { width: 100%; } #cam .pic { aspect-ratio: 16 / 9; } }
 .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--dim); margin-top: 8px; }
 .sw { display: inline-block; width: 20px; border-top: 2px solid; vertical-align: middle; margin-right: 6px; }
 .readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0; background: var(--sheet); border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
@@ -127,12 +151,14 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--raised); }
 #falls { width: 100%; height: 240px; display: block; }
 
 /* tests */
-.tests { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0; border-top: 1px solid var(--rule); }
+.tests { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0; border-top: 1px solid var(--rule); align-items: start; }
 .test { padding: 14px 16px 14px 0; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--rule); }
 .test b { font: 700 16px var(--head); }
-.test p { margin: 0; color: var(--dim); font-size: 14px; flex: 1; max-width: 42ch; }
+.test p { margin: 0; color: var(--dim); font-size: 14px; max-width: 42ch; }
 .test .warnline { color: var(--warn); font-size: 13px; font-weight: 600; }
 .test button { align-self: flex-start; }
+.test .out { margin-right: 16px; max-height: 180px; }
+.test .out .n { color: var(--sig); font-weight: 600; }
 
 /* health */
 .checks div { padding: 7px 0 6px; border-bottom: 1px solid var(--rule); display: flex; gap: 12px; }
@@ -140,19 +166,23 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--raised); }
 .checks i.OK { color: var(--ok); box-shadow: inset 0 0 0 1.5px var(--ok); }
 .checks i.WARN { color: var(--warn); box-shadow: inset 0 0 0 1.5px var(--warn); }
 .checks i.FAIL { color: var(--on-ink); background: var(--bad); }
+.checks i.NA { color: var(--dim); box-shadow: inset 0 0 0 1.5px var(--rule); }
+.checks span { display: flex; flex-direction: column; gap: 2px; }
+.checks small.why { color: var(--dim); font-size: 13px; }
 
 /* console: a terminal strip under the sheet */
 #con { grid-area: con; background: var(--term); color: var(--term-text); }
 #con .bar { display: flex; align-items: center; gap: 10px; padding: 7px 18px 6px; }
 #con .bar b { font: 700 14px var(--head); }
 #con .hint { color: #8f979a; }
-#con button { background: transparent; color: var(--term-text); border-color: #4a5053; }
-#con button.primary { background: var(--term-text); color: var(--term); border-color: var(--term-text); }
+#con button { background: transparent; color: var(--term-text); border-color: #4a5053; box-shadow: none; }
+#con button.primary { background: var(--sig); color: var(--term); border-color: var(--sig); }
 #conLog { height: 0; overflow: auto; font: 13px/1.55 var(--mono); padding: 0 18px; transition: height .18s ease; white-space: pre-wrap; }
 #con.open #conLog { height: 200px; }
 #conLog .c { color: #9fb4ff; }
 #conLog .e { color: #ff8b7e; }
 #conLog .o { color: #f1e6c8; font-weight: 600; }
+#conLog .why, .out [data-why], .checks div[data-why] { text-decoration: underline dotted; text-decoration-color: var(--dim); text-underline-offset: 3px; cursor: help; }
 #conForm { display: none; padding: 6px 18px 10px; gap: 8px; }
 #con.open #conForm { display: flex; }
 #conIn { flex: 1; font-family: var(--mono); background: #23272a; border-color: #4a5053; color: var(--term-text); }
@@ -176,12 +206,12 @@ dialog.wide { max-width: 720px; width: 92vw; }
 .steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; position: relative; }
 .steps::before { content: ""; position: absolute; left: 16.5px; top: 18px; bottom: 18px; border-left: 1.5px solid var(--rule); }
 .steps .n { position: relative; }
-.steps button { width: 100%; text-align: left; background: transparent; border: 0; border-radius: 0; padding: 7px 4px; display: flex; gap: 12px; align-items: center; color: var(--dim); }
-.steps button:hover:not(:disabled) { color: var(--text); }
+.steps button { width: 100%; text-align: left; background: transparent; border: 0; border-radius: 0; box-shadow: none; padding: 7px 4px; display: flex; gap: 12px; align-items: center; color: var(--dim); }
+.steps button:hover:not(:disabled) { color: var(--text); background: transparent; }
 .steps button.sel { color: var(--text); font-weight: 700; }
 .steps .n { flex: 0 0 26px; height: 26px; border-radius: 50%; border: 1.5px solid var(--rule); background: var(--sheet); display: grid; place-items: center; font: 700 13px var(--head); }
-.steps button.sel .n { border-color: var(--text); }
-.steps .done .n { background: var(--text); border-color: var(--text); color: var(--on-ink); }
+.steps button.sel .n { border-color: var(--sig); color: var(--sig-ink); }
+.steps .done .n { background: var(--sig); border-color: var(--sig); color: var(--on-ink); }
 .steps .fail .n { border-color: var(--bad); color: var(--bad); }
 .steps .opt { font-size: 12px; color: var(--dim); font-weight: 400; }
 .stepcard { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 20px; align-items: start; }
@@ -219,7 +249,7 @@ dialog.wide { max-width: 720px; width: 92vw; }
 .banner.ok { border-left-color: var(--ok); } .banner.warn { border-left-color: var(--warn); } .banner.bad { border-left-color: var(--bad); }
 
 @media (max-width: 760px) {
-  body { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "nav" "main" "con"; grid-template-rows: auto auto minmax(0, 1fr) auto; }
+  body { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "alert" "nav" "main" "con"; grid-template-rows: auto auto auto minmax(0, 1fr) auto; }
   #top { padding: 0 12px; }
   #brand { padding: 10px 14px 8px 0; width: 100%; }
   .stat { padding: 6px 12px 5px; }
@@ -247,6 +277,8 @@ dialog.wide { max-width: 720px; width: 92vw; }
   <button id="quick" class="ghost" title="Health check, noise and the last tap in one sentence">Is everything OK?</button>
 </header>
 
+<div id="alert" style="display:none"><div class="grow"><b id="alertT"></b><div class="hint" id="alertB"></div></div><button id="alertFw">Firmware restart</button><button id="alertRs" class="ghost">Restart Klipper</button></div>
+
 <nav id="nav">
   <button data-v="setup" id="navSetup">Setup</button>
   <button data-v="live" class="sel">Live</button>
@@ -262,6 +294,7 @@ dialog.wide { max-width: 720px; width: 92vw; }
 
 <main>
   <section class="panel" id="scope">
+   <div class="fig">
     <div class="head">
       <h2 class="grow" id="scopeTitle">Sensor</h2>
       <label>Window <select id="win"><option>2</option><option>5</option><option selected>10</option><option>30</option><option>60</option></select> s</label>
@@ -281,6 +314,11 @@ dialog.wide { max-width: 720px; width: 92vw; }
       <span><span class="sw" style="border-color:var(--tap)"></span>tap contact</span>
     </div>
     <div class="legend" id="legFft" style="display:none"><span id="fftNote"></span></div>
+   </div>
+   <div id="cam" style="display:none">
+     <div class="pic"><img id="camImg" alt="Printer camera"><span class="hint" id="camNote"></span></div>
+     <select id="camSel" class="hint" style="display:none"></select>
+   </div>
   </section>
 
 
@@ -321,6 +359,11 @@ dialog.wide { max-width: 720px; width: 92vw; }
       <div class="row"><h2 class="grow">Clog and runout watch</h2>
         <label class="hint row">Window <select id="pwin"><option value="60">1 min</option><option value="300" selected>5 min</option><option value="900">15 min</option><option value="1800">30 min</option></select></label></div>
       <p class="hint" id="monState" style="margin:0 0 8px">The watch runs during a print, after OZNLAB_MONITOR in PRINT_START.</p>
+      <div class="row" id="watchBtns" style="margin:0 0 10px">
+        <button data-run="OZNLAB_MONITOR OFF=1" data-print="1" id="monOff" title="Stops the clog and runout watch for the rest of this print">Stop the clog watch</button>
+        <button data-run="OZNLAB_CRASH OFF=1" data-print="1" id="crashOff" title="Stops the collision watch for the rest of this print">Stop the crash watch</button>
+        <span class="hint" id="crashState"></span>
+      </div>
       <canvas id="pchart" style="width:100%;height:300px;display:block" aria-label="Measured and expected melt pressure"></canvas>
       <div class="legend"><span><span class="sw" style="border-color:var(--sig)"></span>measured pressure</span><span><span class="sw" style="border-color:var(--cmd);border-top-style:dashed"></span>expected at this flow</span><span><span class="sw" style="border-color:var(--bad);border-top-style:dashed"></span>clog and runout limits</span><span>ticks on top: a new layer</span></div>
     </div>
@@ -420,7 +463,7 @@ dialog.wide { max-width: 720px; width: 92vw; }
         </div>
         <div class="row">
           <button class="primary" data-run="OZNLAB_TAP" data-home="1">Tap now</button>
-          <button data-run="OZNLAB_TAP_ADJUST" title="After babystepping a first layer: keep that change">Keep my babystep</button>
+          <button data-run="OZNLAB_TAP_ADJUST" data-print="1" title="After babystepping a first layer: keep that change">Keep my babystep</button>
           <button data-run="SAVE_CONFIG" data-confirm="SAVE_CONFIG restarts Klipper. Continue?">Save config</button>
         </div>
       </div>
@@ -458,14 +501,14 @@ dialog.wide { max-width: 720px; width: 92vw; }
   <section class="view" id="v_tests">
     <div class="panel">
       <h2>Tests</h2>
-      <p class="lead">Each test prints its result in the console below. The filament tests extrude in the air: park the nozzle over the purge area first.</p>
+      <p class="lead">Each test shows its result under its button, and in the console. The filament tests extrude in the air: park the nozzle over the purge area first.</p>
       <div class="tests">
-        <div class="test"><b>Push test</b><p>Push the nozzle up with a finger for 30 s. Every push prints a line with its size.</p><span class="warnline">Cold nozzle only.</span><button data-run="OZNLAB_WATCH DURATION=30" data-cold="1">Start</button></div>
-        <div class="test"><b>Max flow</b><p>Extrudes faster and faster and finds where the hotend stops keeping up. Use the answer as the slicer's max volumetric speed.</p><button data-run="OZNLAB_MAX_FLOW" data-hot="1">Start</button></div>
-        <div class="test"><b>Retraction</b><p>Finds the retraction length that drops the melt pressure, the one that stops oozing without wasting time.</p><button data-run="OZNLAB_RETRACT_TEST" data-hot="1">Start</button></div>
-        <div class="test"><b>Temperature scan</b><p>Pressure against nozzle temperature: where this filament flows freely without cooking.</p><button data-run="OZNLAB_TEMP_SCAN" data-hot="1">Start</button></div>
-        <div class="test"><b>Crash test</b><p>Knock the toolhead for 60 s and see if each hit is noticed.</p><button data-run="OZNLAB_CRASH TEST=1">Start</button></div>
-        <div class="test"><b>Homing dry run</b><p>Runs the nozzle homing descent on a homed printer without changing anything.</p><button data-run="OZNLAB_HOME_TEST" data-home="1">Start</button></div>
+        <div class="test"><b>Push test</b><p>Push the nozzle up with a finger for 30 s. Every push prints a line with its size.</p><span class="warnline">Cold nozzle only.</span><button data-run="OZNLAB_WATCH DURATION=30" data-cold="1">Start</button><div class="out"></div></div>
+        <div class="test"><b>Max flow</b><p>Extrudes faster and faster and finds where the hotend stops keeping up. Use the answer as the slicer's max volumetric speed.</p><button data-run="OZNLAB_MAX_FLOW" data-hot="1">Start</button><div class="out"></div></div>
+        <div class="test"><b>Retraction</b><p>Finds the retraction length that drops the melt pressure, the one that stops oozing without wasting time.</p><button data-run="OZNLAB_RETRACT_TEST" data-hot="1">Start</button><div class="out"></div></div>
+        <div class="test"><b>Temperature scan</b><p>Pressure against nozzle temperature: where this filament flows freely without cooking.</p><button data-run="OZNLAB_TEMP_SCAN" data-hot="1">Start</button><div class="out"></div></div>
+        <div class="test"><b>Crash test</b><p>Knock the toolhead for 60 s and see if each hit is noticed.</p><button data-run="OZNLAB_CRASH TEST=1">Start</button><div class="out"></div></div>
+        <div class="test"><b>Homing dry run</b><p>Runs the nozzle homing descent on a homed printer without changing anything.</p><button data-run="OZNLAB_HOME_TEST" data-home="1">Start</button><div class="out"></div></div>
       </div>
     </div>
   </section>
@@ -491,7 +534,7 @@ dialog.wide { max-width: 720px; width: 92vw; }
 
 <section id="con">
   <div class="bar"><b>Console</b><span class="hint grow" id="conLast"></span>
-    <label class="hint row"><input type="checkbox" id="conOnly"> OznLab only</label>
+    <label class="hint row" title="Hides Klipper's other chatter. Errors always show."><input type="checkbox" id="conOnly"> OznLab only</label>
     <button class="ghost" id="conToggle">Open</button></div>
   <div id="conLog"></div>
   <form id="conForm" autocomplete="off"><input id="conIn" type="text" list="cmdList" placeholder="G-code or OZNLAB_ command, Enter to send, up for history"><button class="primary">Send</button></form>
@@ -529,15 +572,15 @@ function rpc(method, params) {
 }
 function connect() {
   ws = new WebSocket(wsUrl);
-  ws.onopen = start;
-  ws.onclose = () => { setKlippy('disconnected', false); for (const id in pending) pending[id].reject({ message: 'connection lost' }); pending = {}; setTimeout(connect, 2000); };
+  ws.onopen = () => { linked = true; renderAlert(); start(); };
+  ws.onclose = () => { linked = false; setKlippy('disconnected', false); renderAlert(); for (const id in pending) pending[id].reject({ message: 'connection lost' }); pending = {}; setTimeout(connect, 2000); };
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
     if (m.id && pending[m.id]) { const p = pending[m.id]; delete pending[m.id]; m.error ? p.reject(m.error) : p.resolve(m.result); return; }
     if (m.method === 'notify_status_update') merge(m.params[0]);
     else if (m.method === 'notify_gcode_response') conAdd(m.params[0], 'r');
     else if (m.method === 'notify_klippy_ready') start();
-    else if (m.method === 'notify_klippy_shutdown' || m.method === 'notify_klippy_disconnected') setKlippy(m.method === 'notify_klippy_shutdown' ? 'shutdown' : 'disconnected', false);
+    else if (m.method === 'notify_klippy_shutdown' || m.method === 'notify_klippy_disconnected') { S.webhooks.state = m.method === 'notify_klippy_shutdown' ? 'shutdown' : 'disconnected'; setKlippy(S.webhooks.state, false); renderAlert(); }
   };
 }
 async function start() {
@@ -557,18 +600,64 @@ async function start() {
     beat();
     loadConsole();
     loadCommands();
+    loadCams();
     afterRestart();
   } catch (e) {
     setKlippy('refused', false);
     toast('err', 'Moonraker refused the connection', (e.message || '') + ' Open this page from the printer address, e.g. http://printer/oznlab.html');
   }
 }
-let beatBusy = false;
+// ================= camera =================
+// Moonraker's webcam list; an MJPEG stream shows as it is, anything else is polled as snapshots
+let cams = [], camTimer = null;
+const camUrl = (u) => !u ? '' : /^https?:/.test(u) ? u : httpBase + (u.startsWith('/') ? '' : '/') + u;
+async function loadCams() {
+  try {
+    const r = await rpc('server.webcams.list');
+    cams = (r.webcams || []).filter(c => c.enabled !== false && (c.stream_url || c.snapshot_url));
+  } catch (e) { cams = []; }
+  const box = $('cam'), sel = $('camSel');
+  box.style.display = cams.length ? '' : 'none';
+  if (!cams.length) { requestAnimationFrame(redrawAll); return; }
+  sel.innerHTML = cams.map((c, i) => `<option value="${i}">${esc(c.name || 'camera ' + (i + 1))}</option>`).join('');
+  sel.style.display = cams.length > 1 ? '' : 'none';
+  let pick = 0;
+  try { const want = localStorage.getItem('oznlab_cam'); const i = cams.findIndex(c => c.name === want); if (i >= 0) pick = i; } catch (e) {}
+  sel.value = pick; showCam(pick);
+  requestAnimationFrame(redrawAll);
+}
+function showCam(i) {
+  const c = cams[i], img = $('camImg'); if (!c) return;
+  clearInterval(camTimer); camTimer = null;
+  try { localStorage.setItem('oznlab_cam', c.name || ''); } catch (e) {}
+  const rot = (c.rotation || 0) % 360, fx = c.flip_horizontal ? -1 : 1, fy = c.flip_vertical ? -1 : 1;
+  img.style.transform = `rotate(${rot}deg) scale(${fx}, ${fy})`;
+  img.classList.toggle('contain', !!c.aspect_ratio && c.aspect_ratio !== '1:1' && rot % 180 !== 0);
+  const svc = String(c.service || '').toLowerCase();
+  const mjpeg = /mjpeg|mjpg/.test(svc) || (!svc && c.stream_url);
+  $('camNote').textContent = '';
+  img.onerror = () => { $('camNote').textContent = 'No picture from ' + (c.name || 'the camera'); };
+  if (mjpeg && c.stream_url) { img.src = camUrl(c.stream_url); return; }
+  // snapshots, about twice a second: enough to see the print, kind to the Pi
+  const snap = () => { if (document.hidden) return; img.src = camUrl(c.snapshot_url || c.stream_url) + (/\?/.test(c.snapshot_url || '') ? '&' : '?') + 't=' + Date.now(); };
+  snap(); camTimer = setInterval(snap, 600);
+}
+$('camSel').onchange = () => showCam(+$('camSel').value);
+
+// the keep-alive that makes the module stream samples. Over the module's own endpoint it is
+// answered at once, also mid-print; on a module before v0.11.9 that endpoint does not exist and
+// the G-code command is used, which waits behind a running print
+let beatBusy = 0, beatGcode = false;
 async function beat() {
-  if (beatBusy || !sensorName) return;
-  beatBusy = true;
-  try { await rpc('printer.gcode.script', { script: 'OZNLAB_LIVE SENSOR=' + sensorName }); } catch (e) {}
-  beatBusy = false;
+  if (!sensorName || (beatBusy && Date.now() - beatBusy < 15000)) return;
+  beatBusy = Date.now();
+  try {
+    if (!beatGcode) await rpc('printer.oznlab.live', { sensor: sensorName });
+    else await rpc('printer.gcode.script', { script: 'OZNLAB_LIVE SENSOR=' + sensorName });
+  } catch (e) {
+    if (!beatGcode && /not found|unknown|-32601/i.test((e.message || '') + (e.code || ''))) { beatGcode = true; beatBusy = 0; return beat(); }
+  }
+  beatBusy = 0;
 }
 setInterval(beat, 20000);
 
@@ -598,6 +687,43 @@ function merge(st) {
   if (st.bed_mesh) renderMesh();
 }
 function setKlippy(text, ok) { $('s_klippy').textContent = text; $('dot').classList.toggle('live', ok); }
+let linked = false;
+// one band for the two things that stop everything: no Moonraker, or Klipper not ready
+function renderAlert() {
+  const a = $('alert'), st = S.webhooks.state;
+  let title = '', body = '', fw = false;
+  if (!linked) { title = 'Not connected to Moonraker'; body = 'Reconnecting every 2 s. Is the printer on and this page opened from its address?'; }
+  else if (st && st !== 'ready') {
+    title = st === 'shutdown' ? 'Klipper is shut down' : st === 'startup' ? 'Klipper is starting' : 'Klipper is ' + st;
+    body = (S.webhooks.state_message || '').replace(/\s*Once the underlying issue is corrected[\s\S]*$/, '').trim();
+    fw = st === 'shutdown' || st === 'error';
+  }
+  a.style.display = title ? 'flex' : 'none';
+  $('alertT').textContent = title; $('alertB').textContent = body;
+  $('alertFw').style.display = fw ? '' : 'none'; $('alertRs').style.display = fw ? '' : 'none';
+  lockButtons();
+}
+$('alertFw').onclick = () => rpc('printer.firmware_restart').catch(e => toast('err', 'Firmware restart failed', e.message || ''));
+$('alertRs').onclick = () => rpc('printer.restart').catch(e => toast('err', 'Restart failed', e.message || ''));
+// what may be clicked now: nothing while disconnected or while an OznLab command runs; during a
+// print only what is meant for a print (data-print), the checks and the bundle
+function lockButtons() {
+  const r = S.oz.running, pr = printing(), ready = linked && S.webhooks.state === 'ready';
+  for (const btn of document.querySelectorAll('[data-run], #paStart, #runCheck, #quick, #stepRun, #bundleBtn')) {
+    const inPrint = btn.dataset.print || ['runCheck', 'quick', 'bundleBtn'].includes(btn.id);
+    let why = '';
+    if (!ready) why = 'Klipper is not ready';
+    else if (r && btn.dataset.run !== 'SAVE_CONFIG') why = r + ' is running';
+    else if (pr && !inPrint) why = 'Not during a print';
+    btn.disabled = !!why;
+    if (btn.dataset.title0 === undefined) btn.dataset.title0 = btn.title || '';   // its own tooltip, kept
+    btn.title = why || btn.dataset.title0;
+  }
+  $('monOff').style.display = S.oz.mon ? '' : 'none';
+  $('crashOff').style.display = S.oz.crash ? '' : 'none';
+  const c = S.oz.crash;
+  $('crashState').textContent = c ? (c.test ? 'Crash test running, ' : 'Crash watch on, ') + c.n + (c.n === 1 ? ' event' : ' events') : '';
+}
 function homed(axes) { const h = (S.toolhead.homed_axes || ''); return [...axes].every(a => h.includes(a)); }
 function printing() { return ['printing', 'paused'].includes(S.print_stats.state); }
 function renderTop() {
@@ -616,7 +742,8 @@ function renderTop() {
   const r = S.oz.running;
   $('running').style.display = r ? 'flex' : 'none';
   $('running').textContent = r ? r.replace('OZNLAB_', '').replace(/_/g, ' ').toLowerCase() + ' running' : '';
-  for (const btn of document.querySelectorAll('[data-run], #paStart, #runCheck, #quick, #stepRun, #bundleBtn')) btn.disabled = !!r && btn.dataset.run !== 'SAVE_CONFIG';
+  lockButtons();
+  if (S.webhooks.state !== lastWh) { lastWh = S.webhooks.state; renderAlert(); }
   const ps = S.print_stats.state;
   if (ps !== lastPs) {
     // a print starting while the page is open: the watch is what matters now
@@ -678,12 +805,34 @@ async function run(cmd, opts) {
   }
 }
 for (const b of document.querySelectorAll('[data-run]')) {
-  b.addEventListener('click', () => run(b.dataset.run, { home: b.dataset.home, cold: b.dataset.cold, hot: b.dataset.hot, confirm: b.dataset.confirm }));
+  const opts = { home: b.dataset.home, cold: b.dataset.cold, hot: b.dataset.hot, confirm: b.dataset.confirm, duringPrint: b.dataset.print };
+  const box = b.parentElement.classList.contains('test') ? b.parentElement.querySelector('.out') : null;
+  if (!box) { b.addEventListener('click', () => run(b.dataset.run, opts)); continue; }
+  // a test card: its console lines land under its button while it runs, and stay there
+  b.addEventListener('click', async () => {
+    const lines = [], label = b.textContent;
+    box.innerHTML = ''; b.textContent = 'Running ...';
+    const draw = () => {
+      const shown = lines.filter((l, i) => l.trim() && !/^action:/.test(l) && l !== b.dataset.run && l !== lines[i - 1]);
+      const atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 8;
+      box.innerHTML = shown.map(l => `<div class="${/\[\s*FAIL|^!!/.test(l) ? 'FAIL' : /\[\s*WARN/.test(l) ? 'WARN' : /^(TAP #|PRESS released)/.test(l) ? 'n' : ''}"${gloss(l) ? ' title="' + esc(gloss(l)) + '" data-why="1"' : ''}>${esc(l)}</div>`).join('');
+      if (atEnd) box.scrollTop = box.scrollHeight;
+    };
+    capWatch.add(draw);
+    try {
+      const { ok } = await runCapture(b.dataset.run, opts, lines);
+      if (ok === null) { box.innerHTML = ''; return; }
+      const n = lines.filter(l => /^(TAP #|PRESS released)/.test(l)).length;
+      if (/OZNLAB_WATCH/.test(b.dataset.run)) lines.push(n ? n + (n === 1 ? ' push seen.' : ' pushes seen.') : 'No push seen. Is the coil connected, and did you push the nozzle itself?');
+      if (!lines.some(l => l.trim())) lines.push(ok ? 'Done.' : 'Stopped, see the console.');
+      draw();
+    } finally { capWatch.delete(draw); b.textContent = label; }
+  });
 }
 for (const b of document.querySelectorAll('[data-go]')) b.addEventListener('click', () => show(b.dataset.go));
 
 // ================= navigation =================
-let curView = 'live', lastPs;
+let curView = 'live', lastPs, lastWh;
 function show(v) {
   if (!$('v_' + v)) v = 'live';
   curView = v;
@@ -695,6 +844,46 @@ function show(v) {
   requestAnimationFrame(redrawAll);
 }
 $('nav').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b && b.dataset.v) show(b.dataset.v); });
+
+// ================= what a warning means =================
+// short plain words for the lines that make people stop: shown on hover in the console,
+// under a test and in the health check. First match wins.
+const GLOSS = [
+  [/sensor too weak to home/i, 'The coil signal at this temperature is too small for homing. Heat the nozzle (150 C) or bring the coil closer to the heatsink.'],
+  [/sensor too noisy to home/i, 'The signal jumps around at rest, so no safe trigger threshold exists. Run the health check: coil cable, fans, loose coil.'],
+  [/no tap yet, run OZNLAB_TAP/i, 'Homing needs the sensitivity from a tap. One OZNLAB_TAP measures it.'],
+  [/taps disagree/i, 'The taps did not land within the tolerance. Usually plastic on the tip: clean the nozzle and tap again.'],
+  [/samples flagged by the chip \(amplitude\)/i, 'The chip would like more drive current than it has for this coil. The readings are still correct, nothing to do.'],
+  [/conversion errors?.*bad readings/i, 'Some samples were unusable. Run the drive current calibration; still there afterwards: coil cable or wiring.'],
+  [/f0 outside the usual/i, 'The resonance is far from where this coil should sit: no coil, a broken coil trace, or a wrong C4a.'],
+  [/noise \d+ Hz is high/i, 'At rest the signal should be nearly flat. A coil or cable that can move, or a fan blowing on the coil, shows up here.'],
+  [/noise measured during a print/i, 'During a print the sensor sees the extrusion pressure, so this noise figure says nothing about the sensor.'],
+  [/sample rate .* below the configured/i, 'Samples arrive slower than asked: the I2C bus is the bottleneck. i2c_speed: 400000 in the sensor section helps.'],
+  [/reg_drive_current not (saved|set)/i, 'The drive current was measured but not written to printer.cfg yet. SAVE_CONFIG keeps it.'],
+  [/pa_scale not tuned/i, 'Pressure advance from the sensor is only a guess until step 5 measures this hotend.'],
+  [/PRINT_START does not call/i, 'The listed OznLab commands are not in your PRINT_START macro, so the sensor does nothing at print start.'],
+  [/no \[pause_resume\]/i, 'The watch actions call PAUSE, which needs [pause_resume] in printer.cfg to work.'],
+  [/sensor does not answer on I2C/i, 'No reply from the chip. Check 5V, GND, SCL, SDA, the JP1 bridge and i2c_address.'],
+  [/wrong chip id/i, 'Something answered on that address, but it is not the sensor. Wrong address or another device on the bus.'],
+  [/no samples arrived/i, 'The chip answers but sends no readings. Usually the coil is not connected.'],
+  [/no pressure signal|no pressure, filament loaded/i, 'Extruding gave no pressure rise. Filament not loaded, not hot, or not reaching the nozzle.'],
+  [/signal too noisy, no result/i, 'The pressure trains were too noisy to find the undershoot. Try a slower speed or a different filament.'],
+  [/no undershoot up to K/i, 'Even a large K did not overshoot: the extruder may be slipping or the path has play. Check the filament path.'],
+  [/sample timing (broken|did not settle)/i, 'The sample clock was unstable during the burst. Run it again; if it repeats, send a bundle.'],
+  [/not enough samples/i, 'Too few samples after the speed drop. The descent or the speed step is too fast for the data rate.'],
+  [/CLOG:/i, 'Melt pressure rose far above the level learned at the start of this print.'],
+  [/RUNOUT:/i, 'Melt pressure dropped far below normal: no filament, or the extruder slips.'],
+  [/possible CRASH/i, 'The nozzle was pushed up suddenly: a collision with the print or the bed.'],
+  [/no data from the sensor/i, 'No readings reached Klipper. Check the sensor wiring and the i2c_address / JP1 pair.'],
+  [/Missed scheduling of next digital out/i, 'The toolhead board did not get its heater updates in time, usually the host was too busy. v0.11.9 fixes the known cause in PA auto.'],
+  [/Timer too close/i, 'The host could not keep up with the MCU timing. A slow host or too much load.'],
+  [/heaters off in \d+ min/i, 'After a measurement outside a print the heaters switch off by themselves. Any OznLab command or a print keeps them on.'],
+  [/a print is running \(the clog watch is on\)/i, 'Commands that move the toolhead are refused while the clog watch runs, so they cannot drive into the print.'],
+  [/home first \(G28\)/i, 'The printer is not homed. Home it, then run the command again.'],
+  [/below min_extrude_temp/i, 'The nozzle is colder than Klipper allows for extrusion. Heat it to printing temperature first.'],
+  [/Must home axis first|Move out of range/i, 'Klipper refused the move. Home the printer or check the coordinates.'],
+];
+function gloss(line) { for (const [re, t] of GLOSS) if (re.test(line)) return t; return ''; }
 
 // ================= console =================
 const conLines = [];
@@ -710,14 +899,17 @@ function conAdd(text, kind) {
   renderCon();
   for (const c of caps) c.push(...String(text).split('\n').map(clean));
   if (caps.size && curView === 'setup') renderStepOut();
+  for (const f of capWatch) f();
 }
 function renderCon() {
   const only = $('conOnly').checked, log = $('conLog');
   const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 8;
   log.innerHTML = '';
   for (const l of conLines) {
-    if (only && !l.oz) continue;
-    const d = document.createElement('div'); d.className = l.k; d.textContent = (l.k === 'c' ? '> ' : '') + l.text; log.appendChild(d);
+    if (only && !l.oz && l.k !== 'e') continue;
+    const d = document.createElement('div'); d.className = l.k; d.textContent = (l.k === 'c' ? '> ' : '') + l.text;
+    const g = gloss(l.text); if (g) { d.title = g; d.classList.add('why'); }
+    log.appendChild(d);
   }
   if (atEnd) log.scrollTop = log.scrollHeight;
 }
@@ -752,7 +944,7 @@ $('conIn').onkeydown = (e) => {
 };
 // health check: the console lines that arrive while OZNLAB_CHECK runs are its report
 // console lines that arrive while a command runs are its report (cleaned of the '// ')
-const caps = new Set();
+const caps = new Set(), capWatch = new Set();
 async function runCapture(cmd, opts, lines) {
   lines = lines || []; caps.add(lines);
   try { return { ok: await run(cmd, opts), lines }; } finally { caps.delete(lines); }
@@ -761,9 +953,12 @@ function renderChecks(lines) {
   const box = $('checks'); box.innerHTML = '';
   let n = 0;
   lines.forEach((l) => {
-    const m = l.match(/^\s*\[\s*(OK|WARN|FAIL)\s*\]\s*(.*)$/);
+    const m = l.match(/^\s*\[\s*(OK|WARN|FAIL|--)\s*\]\s*(.*)$/);
     if (!m) return;
-    const d = document.createElement('div'); d.innerHTML = `<i class="${m[1]}">${m[1]}</i><span></span>`; d.querySelector('span').textContent = m[2]; box.appendChild(d); n++;
+    const d = document.createElement('div'); d.innerHTML = `<i class="${m[1] === '--' ? 'NA' : m[1]}">${m[1] === '--' ? 'info' : m[1]}</i><span></span>`; d.querySelector('span').textContent = m[2];
+    const g = m[1] !== 'OK' && gloss(m[2]);
+    if (g) { const w = document.createElement('small'); w.className = 'why'; w.textContent = g; d.querySelector('span').appendChild(w); }
+    box.appendChild(d); n++;
   });
   if (!n) box.innerHTML = '<div class="empty">The check printed no result lines; see the console.</div>';
 }
@@ -1159,7 +1354,7 @@ function renderStepOut() {
     shown.push({ t: l, c: m ? m[1] : '' });
   }
   const atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 8;
-  box.innerHTML = shown.map(x => `<div class="${x.c}">${esc(x.t)}</div>`).join('');
+  box.innerHTML = shown.map(x => `<div class="${x.c}"${gloss(x.t) ? ' title="' + esc(gloss(x.t)) + '" data-why="1"' : ''}>${esc(x.t)}</div>`).join('');
   if (atEnd) box.scrollTop = box.scrollHeight;
   if (STEPS[cur - 1].count && $('pushN')) $('pushN').textContent = lines.filter(l => /^(TAP #|PRESS released)/.test(l)).length;
 }

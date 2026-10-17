@@ -389,6 +389,16 @@ class OznLabSensor:
                 self.gcode.register_mux_command(cmd, 'SENSOR', None, func, desc=desc)
             except Exception:
                 pass
+        # the page's keep-alive, outside the G-code queue: during a print the queue is the print,
+        # and OZNLAB_LIVE sent from the page waits behind it. Moonraker exposes every Klipper
+        # endpoint it finds, this one as printer.oznlab.live (JSON-RPC) / /printer/oznlab/live.
+        try:
+            wh = self.printer.lookup_object('webhooks')
+            if _UPD.get('endpoint') is not self.printer:      # once per Klipper start, for every sensor
+                wh.register_endpoint('oznlab/live', self._web_live)
+                _UPD['endpoint'] = self.printer
+        except Exception:
+            logging.exception("oznlab: could not register the live endpoint")
         self.printer.register_event_handler('klippy:connect', self._on_connect)
         self.printer.register_event_handler('klippy:ready', self._on_ready)
         # a tap done since Z was last homed: OZNLAB_PRINT_START then does not tap again
@@ -1350,10 +1360,23 @@ class OznLabSensor:
 
     cmd_LIVE_help = "Keeps the live sensor view (oznlab.html) fed for another minute; the page sends it itself"
     def cmd_LIVE(self, gcmd):
+        self._beat()
+
+    def _beat(self):
         L = self._live
         L['beat'] = self.reactor.monotonic()
         if L['timer'] is None:
             L['timer'] = self.reactor.register_timer(self._live_tick, self.reactor.NOW)
+
+    def _web_live(self, web_request):
+        """printer.oznlab.live {sensor: name}: the page's keep-alive, answered at once even
+        mid-print. Without sensor: every sensor on this printer"""
+        want = web_request.get_str('sensor', None)
+        n = 0
+        for name, oz in self.printer.lookup_objects('oznlab_sensor'):
+            if want and oz.name != want: continue
+            oz._beat(); n += 1
+        web_request.send({'ok': n > 0, 'sensors': n})
 
     def get_status(self, eventtime):
         # samples go out while a page keeps OZNLAB_LIVE alive, and during a tap or a PA test
@@ -1379,6 +1402,7 @@ class OznLabSensor:
         return {'viewer': True, 'version': VERSION, 'rate': self.sensor.data_rate, 'info': info,
                 'running': self._running, 'saved': self._saved_status(), **self._page_status(),
                 'mon': self._mon_status(),
+                'crash': dict(n=self._crash['n'], test=bool(self._crash.get('test'))) if self._crash is not None else None,
                 # copies: Klipper finds the changes by comparing with what it sent last time
                 'live': list(self._live['buf']), 'viz': copy.deepcopy(self._viz)}
 
@@ -3921,10 +3945,26 @@ class OznLabSensor:
         if not 1.0e6 < st['f0'] < 6.0e6:
             ok = False; L.append("  [WARN] f0 outside the usual 2-4 MHz - coil cable, C4a value, or no coil connected")
         if st['errors']:
-            ok = False
-            L.append("  [FAIL] %d conversion errors - run: LDC_CALIBRATE_DRIVE_CURRENT CHIP=%s   then SAVE_CONFIG"
-                     % (st['errors'], self.name))
-        if st['noise'] > 60.:
+            # the chip flags every sample it is unhappy with; a flag on a sample that is still a
+            # good reading (no bad ones, the rate as expected) is its amplitude warning: the coil
+            # is hard to drive even at the top drive current. Those readings are valid, the taps
+            # show it, so this is a warning, not a failure. Bad samples are a failure.
+            try: dc = int(self.sensor.dccal.get_drive_current())
+            except Exception: dc = None
+            healthy = not st['bad'] and st['rate'] >= 0.7 * self.sensor.data_rate and st['noise'] < 60.
+            if healthy and dc is not None and dc >= 28:
+                L.append("  [WARN] %d samples flagged by the chip (amplitude) - the coil is hard to drive even at "
+                         "drive current %d; the readings are fine, nothing to do" % (st['errors'], dc))
+            elif healthy:
+                L.append("  [WARN] %d samples flagged by the chip but the readings are fine - run: "
+                         "LDC_CALIBRATE_DRIVE_CURRENT CHIP=%s   then SAVE_CONFIG" % (st['errors'], self.name))
+            else:
+                ok = False
+                L.append("  [FAIL] %d conversion errors, %d bad readings - run: LDC_CALIBRATE_DRIVE_CURRENT CHIP=%s   "
+                         "then SAVE_CONFIG" % (st['errors'], st['bad'], self.name))
+        if self._in_print():
+            L.append("  [ -- ] noise measured during a print: the extrusion is in it, judge it when the printer is idle")
+        elif st['noise'] > 60.:
             L.append("  [WARN] noise %.0f Hz is high (expect ~10) - check that the coil and its wires cannot move" % st['noise'])
         L.append("  [ %s ] sensitivity: %s" % ("OK" if self.sens_table else "--", self._sens_text()
                                                 + ("" if self.sens_table else " (setup step 4 measures it)")))
@@ -4099,7 +4139,7 @@ class OznLabSensor:
                 self._setup_keep(0)
                 R("STEP 2/8  DRIVE CURRENT\n  No data from the sensor - run OZNLAB_SETUP STEP=1 first."); return
             st = self.last_stats or {}
-            if st.get('errors'):
+            if st.get('errors') and (st.get('bad') or st.get('rate', 0.) < 0.7 * self.sensor.data_rate):
                 self._setup_keep(1)
                 R("STEP 2/8  DRIVE CURRENT\n  The sensor reported errors - measuring the drive current again.")
                 self._auto_drive_current()
@@ -4107,9 +4147,11 @@ class OznLabSensor:
                   "  Errors still there afterwards: a coil or wiring problem, see the guide.")
             else:
                 saved = self._cfg_raw(self.cfg_name).get('reg_drive_current') is not None
-                R("STEP 2/8  DRIVE CURRENT\n  [ OK ] no conversion errors, drive current %s.%s"
-                  % ("is fine" if saved else "was measured at start (SAVE_CONFIG keeps it)" if self._dc_auto is not None
-                     else "is the default, run LDC_CALIBRATE_DRIVE_CURRENT CHIP=%s + SAVE_CONFIG" % self.name, nxt))
+                flag = ("\n  [WARN] %d samples flagged by the chip (amplitude), the readings are fine - the coil is "
+                        "hard to drive, nothing to do" % st['errors']) if st.get('errors') else ""
+                R("STEP 2/8  DRIVE CURRENT\n  [ OK ] %s, drive current %s.%s%s"
+                  % ("readings fine" if st.get('errors') else "no conversion errors", "is fine" if saved else "was measured at start (SAVE_CONFIG keeps it)" if self._dc_auto is not None
+                     else "is the default, run LDC_CALIBRATE_DRIVE_CURRENT CHIP=%s + SAVE_CONFIG" % self.name, flag, nxt))
         elif step == 3:
             secs = 25.
             t_noz = self._noz_temp()
@@ -4979,6 +5021,11 @@ class OznLabSensor:
         the nozzle warm enough (the current target when it is, else WORK_TEMP; TEMP= on the
         command overrides), the axes homed. The heaters go off by themselves afterwards
         (COOL_AFTER) when no print runs."""
+        # the clog watch runs only after PRINT_START's last line: a tap, a PA run or a test sent
+        # from the console then would drive the nozzle into the print
+        if self._mon is not None and not gcmd.get_int('FORCE', 0):
+            raise gcmd.error("oznlab %s: a print is running (the clog watch is on) - not moving the toolhead. "
+                             "FORCE=1 overrides" % what)
         if temp is None:
             temp = self._gf(gcmd, 'TEMP', None, minval=0., maxval=350.)
         heater = self.printer.lookup_object('toolhead').get_extruder().get_heater()
