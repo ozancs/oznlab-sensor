@@ -300,6 +300,7 @@ dialog.wide { max-width: 720px; width: 92vw; }
       <label>Window <select id="win"><option>2</option><option>5</option><option selected>10</option><option>30</option><option>60</option></select> s</label>
       <label>Smooth <select id="smooth"><option value="auto" selected>auto</option><option value="0">off</option><option value="0.03">30 ms</option><option value="0.08">80 ms</option><option value="0.2">200 ms</option></select></label>
       <label>Scale <select id="scale"><option value="auto" selected>auto</option><option value="100">100 Hz</option><option value="500">500 Hz</option><option value="2000">2 kHz</option><option value="10000">10 kHz</option></select></label>
+      <label>Drift <select id="drift" title="Remove the slow temperature drift of the coil from the trace (a straight line over the window). The sensor's own measurements ignore it anyway."><option value="0" selected>keep</option><option value="1">remove</option></select></label>
       <label>Unit <select id="unit"><option value="hz" selected>Hz</option><option value="um">um push</option></select></label>
       <label>Show <select id="mode"><option value="sig" selected>signal</option><option value="fft">spectrum</option></select></label>
       <button id="flip" class="ghost" title="Turn the trace upside down">Flip</button>
@@ -1151,6 +1152,16 @@ function smoothed(pts, win) {
   for (let i = 0; i < pts.length; i++) { sum += pts[i][1]; while (pts[i][0] - pts[j][0] > win) { sum -= pts[j][1]; j++; } out.push([pts[i][0] - (pts[i][0] - pts[j][0]) / 2, sum / (i - j + 1)]); }
   return out;
 }
+// the coil's slow temperature drift, as a straight line over the window, taken out so the fast
+// events stand on a flat trace (a least-squares line, so a tap or a push barely tilts it)
+function detrended(pts) {
+  const n = pts.length; if (n < 10) return pts;
+  const t0 = pts[0][0]; let sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (const [t, f] of pts) { const x = t - t0; sx += x; sy += f; sxx += x * x; sxy += x * f; }
+  const den = n * sxx - sx * sx; if (den <= 0) return pts;
+  const b = (n * sxy - sx * sy) / den, a = (sy - b * sx) / n, f0 = pts[0][1];
+  return pts.map(([t, f]) => [t, f - (a + b * (t - t0)) + f0]);
+}
 function median(a) { if (!a.length) return null; const s = a.slice().sort((x, y) => x - y); return s[s.length >> 1]; }
 function niceStep(range, n) { const raw = range / n, p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p; return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p; }
 function drawLive() {
@@ -1158,13 +1169,14 @@ function drawLive() {
   if ($('mode').value === 'fft') { drawSpectrum(g, w, h); return; }
   const L = 58, R = 10, T = 10, B = 24, pw = w - L - R, ph = h - T - B;
   const W = +$('win').value, t1 = clock ? clock.view() : lastT, t0 = t1 - W;
-  const pts = hist.filter(p => p[0] >= t0 && p[0] <= t1), sgn = flip ? -1 : 1;
+  let pts = hist.filter(p => p[0] >= t0 && p[0] <= t1); const sgn = flip ? -1 : 1;
   if (pts.length < 2) {
     g.fillStyle = css('--dim'); g.font = '14px ' + css('--font');
     g.fillText(!objName ? 'Connecting to the printer ...' : 'Waiting for samples. The sensor streams during taps, PA tests, prints and while this page is open.', L, T + ph / 2);
     return;
   }
   const info = S.oz.info || {}, um = $('unit').value === 'um' && info.sens, U = um ? 1 / info.sens : 1;
+  if ($('drift').value === '1') pts = detrended(pts);
   const smSel = $('smooth').value, sm = smoothed(pts, smSel === 'auto' ? ((S.oz.rate || 100) >= 200 ? 0.01 : 0.15) : +smSel);
   const ref = median(sm.slice(0, Math.max(3, sm.length >> 3)).map(p => p[1]));
   let lo = Infinity, hi = -Infinity;
@@ -1675,7 +1687,7 @@ function drawSpectrum(g, w, h) {
 $('mode').onchange = () => {
   const f = $('mode').value === 'fft';
   $('legSig').style.display = f ? 'none' : ''; $('legFft').style.display = f ? '' : 'none';
-  for (const id of ['smooth', 'scale', 'unit', 'flip']) $(id).disabled = f;
+  for (const id of ['smooth', 'scale', 'unit', 'flip', 'drift']) $(id).disabled = f;
 };
 
 // ================= is everything OK? =================

@@ -5,7 +5,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.11.10"
+VERSION = "0.11.11"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -219,6 +219,8 @@ class OznLabSensor:
         self._dc_auto = None               # drive current measured at this start, or None
         # where OZNLAB_PRINT_START measures PA (purge bucket); empty = front left corner of the bed
         self.ps_pa_x = config.getfloat('pa_x', None); self.ps_pa_y = config.getfloat('pa_y', None)
+        # where the tap lands (PRINT_START and the setup); empty = the middle of the bed
+        self.tap_x = config.getfloat('tap_x', None); self.tap_y = config.getfloat('tap_y', None)
         self.ps_pa_z = config.getfloat('pa_z', 10., above=0.5, maxval=100.)   # nozzle height for the PA test
         self.cfg_name = config.get_name()
         # console: one short line per result; per-step numbers go to klippy.log, and to the
@@ -1498,6 +1500,14 @@ class OznLabSensor:
             sps = float(self.sensor.data_rate)
         sps = max(sps, 1.)
         w = self.tap_soft if soft is None else soft
+        if soft is None:
+            # a sensitive coil does not need 0.1 mm of ramp to show the contact: the window
+            # shrinks to what gives a ramp of 30 x the noise (at least 60 Hz), never under
+            # 0.04 mm. A 3 Hz/um coil then presses about 0.06 mm instead of 0.12
+            sens = self._sens_at(self._noz_temp(), safe=True)
+            if sens:
+                sig, q = self._noise_now()
+                w = min(w, max(0.04, max(60., 30. * sig, 4. * q) / sens / 1000.))
         v = max(0.15, min(speed, w * sps / 14.))
         lost = 0.01 * v + v * v / (2. * max(accel, 1.))
         return v, max(0.04, 14. * v / sps + lost + 0.02)
@@ -4250,7 +4260,8 @@ class OznLabSensor:
             (x0, x1), (y0, y1) = [kin.rails[i].get_range() for i in range(2)]
         except Exception:
             x0 = y0 = 0.; x1 = y1 = 200.
-        x = self._gf(gcmd, 'X', (x0 + x1) / 2.); y = self._gf(gcmd, 'Y', (y0 + y1) / 2.)
+        x = self._gf(gcmd, 'X', self.tap_x if self.tap_x is not None else (x0 + x1) / 2.)
+        y = self._gf(gcmd, 'Y', self.tap_y if self.tap_y is not None else (y0 + y1) / 2.)
         self.gcode.run_script_from_command("G90\nG1 Z5 F600\nG1 X%.1f Y%.1f F6000" % (x, y))
 
     def _setup_keep(self, step):
@@ -4817,7 +4828,8 @@ class OznLabSensor:
             (x0, x1), (y0, y1), (z0, z1) = [kin.rails[i].get_range() for i in range(3)]
         except Exception:
             x0 = y0 = 0.; x1 = y1 = 200.; z1 = 200.
-        tx = self._gf(gcmd, 'TAP_X', (x0 + x1) / 2.); ty = self._gf(gcmd, 'TAP_Y', (y0 + y1) / 2.)
+        tx = self._gf(gcmd, 'TAP_X', self.tap_x if self.tap_x is not None else (x0 + x1) / 2.)
+        ty = self._gf(gcmd, 'TAP_Y', self.tap_y if self.tap_y is not None else (y0 + y1) / 2.)
 
         def tap(temp):
             run("G1 Z5 F600")
