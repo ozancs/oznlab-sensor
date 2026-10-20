@@ -5,7 +5,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.11.11"
+VERSION = "0.11.12"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -193,6 +193,18 @@ class OznLabSensor:
             self.sensor = ldc1612.LDC1612(config, None)
         finally:
             ldc1612.LDC1612_ADDR = _addr
+        # The chip's high current drive (CONFIG bit 6): channel 0 up to 6 mA instead of 1.5 mA,
+        # for coils with a parallel resistance under the normal mode's ~1 kOhm (thin, long traces).
+        # Klipper never sets it; every write of the CONFIG register goes through here and gets the
+        # bit while the mode is on. The module decides the mode itself at start (_auto_drive_mode)
+        # and keeps the choice with SAVE_CONFIG as high_drive.
+        self._hd = bool(config.getint('high_drive', 0, minval=0, maxval=1))
+        _set_reg = self.sensor.set_reg
+        def set_reg(reg, val, minclock=0, _orig=_set_reg):
+            if reg == ldc1612.REG_CONFIG:
+                val = (val | (1 << 6)) if self._hd else (val & ~(1 << 6))
+            return _orig(reg, val, minclock=minclock)
+        self.sensor.set_reg = set_reg
         self.i2c_addr = config.getint('i2c_address', 43)
         # a BTT Eddy (or another LDC1612) on the same wires at the same address: both would answer
         for oc in config.get_prefix_sections('probe_eddy_current') + config.get_prefix_sections('ldc1612'):
@@ -627,6 +639,7 @@ class OznLabSensor:
                     self._auto_drive_current()
                 else:
                     self._check_drive_current("at start")
+                self._auto_drive_mode()
         self.reactor.register_callback(later)
         if self.saved_tap_z is None: return
         try:
@@ -679,6 +692,47 @@ class OznLabSensor:
             logging.info("oznlab %s: drive current calibration gave %d, ignored", self.name, dc)
             return None
         return dc
+
+    DC_HIGH = 28        # the chip's own pick at or above this: the coil is at the edge of normal drive
+    DC_LOW_HD = 6       # in high drive, a pick at or below this: normal drive would do
+
+    def _auto_drive_mode(self):
+        """normal or high current drive, from what the chip picks for the coil in each mode.
+        Normal drive at its top (28..31) or no answer at all: high drive, if the chip finds a
+        drive current there. High drive at its bottom: back to normal. Applied now, kept with
+        SAVE_CONFIG (high_drive, reg_drive_current)."""
+        try:
+            cur = int(self.sensor.dccal.get_drive_current())
+        except Exception:
+            return
+        try:
+            if not self._hd and cur < self.DC_HIGH:
+                return
+            if self._hd and cur > self.DC_LOW_HD:
+                return
+            want = not self._hd
+            was = self._hd; self._hd = want
+            dc = self._measure_drive_current()
+            if dc is None or (want and dc >= 31):
+                self._hd = was                       # the other mode is no better: keep this one
+                self.sensor.set_reg(ldc1612.REG_CONFIG, self.sensor.read_reg(ldc1612.REG_CONFIG))
+                logging.info("oznlab %s: drive mode kept %s (other mode gave %s)", self.name,
+                             "high" if was else "normal", dc)
+                return
+            self._apply_drive_current(dc)
+            self._stage('high_drive', '1' if want else '0', "the drive mode")
+            if self.sens_table:                      # the readings change a little with the drive
+                self.sens_table = {}; self._sens_saved = {}
+                self._stage('sens_table', '')
+            msg = ("OznLab: this coil needs the chip's high current drive - switched on, drive current %d. "
+                   "SAVE_CONFIG to keep it, then tap again" % dc if want else
+                   "OznLab: normal drive is enough for this coil - high current drive off, drive current %d. "
+                   "SAVE_CONFIG to keep it" % dc)
+            logging.info("oznlab %s: drive mode %s, drive current %d (was %d)", self.name,
+                         "high" if want else "normal", dc, cur)
+            self.gcode.respond_info(msg)
+        except Exception:
+            logging.exception("oznlab %s: drive mode check failed", self.name)
 
     def _apply_drive_current(self, dc):
         self.sensor.dccal.drive_cur = dc; self._dc_auto = dc
@@ -3950,8 +4004,12 @@ class OznLabSensor:
         self.reactor.pause(self.reactor.monotonic() + 1.7)
         st = self._finish(quiet=True) if self._cap is not None else self.last_stats
         if not st:
-            return False, L + ["  [FAIL] no samples arrived - sensor found but not measuring"]
+            hint = "" if self._hd else " - a RESTART lets the module try the chip's high current drive"
+            return False, L + ["  [FAIL] no samples arrived - sensor found but not measuring" + hint]
         L.append("  [ OK ] f0 = %.4f MHz, noise %.1f Hz rms, %.0f samples/s" % (st['f0']/1e6, st['noise'], st['rate']))
+        if self._hd:
+            L.append("  [ -- ] high current drive on (the coil needs more than 1.5 mA), drive current %s"
+                     % self.sensor.dccal.get_drive_current())
         if not 1.0e6 < st['f0'] < 6.0e6:
             ok = False; L.append("  [WARN] f0 outside the usual 2-4 MHz - coil cable, C4a value, or no coil connected")
         if st['errors']:
@@ -3962,9 +4020,13 @@ class OznLabSensor:
             try: dc = int(self.sensor.dccal.get_drive_current())
             except Exception: dc = None
             healthy = not st['bad'] and st['rate'] >= 0.7 * self.sensor.data_rate and st['noise'] < 60.
-            if healthy and dc is not None and dc >= 28:
+            if healthy and dc is not None and dc >= 28 and not self._hd:
                 L.append("  [WARN] %d samples flagged by the chip (amplitude) - the coil is hard to drive even at "
-                         "drive current %d; the readings are fine, nothing to do" % (st['errors'], dc))
+                         "drive current %d; the readings are fine. The next start switches to high current drive"
+                         % (st['errors'], dc))
+            elif healthy and self._hd:
+                L.append("  [WARN] %d samples flagged by the chip (amplitude) in high current drive %s - the "
+                         "readings are fine, nothing to do" % (st['errors'], dc))
             elif healthy:
                 L.append("  [WARN] %d samples flagged by the chip but the readings are fine - run: "
                          "LDC_CALIBRATE_DRIVE_CURRENT CHIP=%s   then SAVE_CONFIG" % (st['errors'], self.name))
