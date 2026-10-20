@@ -713,7 +713,9 @@ class OznLabSensor:
             want = not self._hd
             was = self._hd; self._hd = want
             dc = self._measure_drive_current()
-            if dc is None or (want and dc >= 31):
+            # back to normal only with room to spare (a pick near the top would send it straight
+            # back to high drive at the next start)
+            if dc is None or (want and dc >= 31) or (not want and dc >= self.DC_HIGH - 4):
                 self._hd = was                       # the other mode is no better: keep this one
                 self.sensor.set_reg(ldc1612.REG_CONFIG, self.sensor.read_reg(ldc1612.REG_CONFIG))
                 logging.info("oznlab %s: drive mode kept %s (other mode gave %s)", self.name,
