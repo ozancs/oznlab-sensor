@@ -62,8 +62,13 @@ fi
 
 echo "Restarting Klipper"
 sudo systemctl restart klipper || echo "Could not restart the klipper service - use RESTART in the console"
+# the page's address: the printer's IP (the first non-loopback one), or its hostname
+IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+[ -n "$IP" ] || IP="$(hostname).local"
 if [ "$CFG_OK" = 1 ]; then
-    echo "Done. Next: OZNLAB_SETUP in the console, one step per call."
+    echo "Done. Open the setup in your browser:  http://$IP/oznlab.html"
+    echo "(or OZNLAB_SETUP in the console, one step per call)"
 else
-    echo "Done, but the config section is not written yet (see above). Then: OZNLAB_SETUP in the console."
+    echo "Done, but the config section is not written yet (see above)."
+    echo "Then open the setup in your browser:  http://$IP/oznlab.html"
 fi
