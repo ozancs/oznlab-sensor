@@ -5,7 +5,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.11.12"
+VERSION = "0.11.13"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -1642,7 +1642,8 @@ class OznLabSensor:
         # hotend temperature (2 Hz/um cold, 10+ Hz/um at printing temperature)
         self.last_sens = hz_per_um
         self._tap_T = self._noz_temp()
-        self._sens_learn(self._tap_T, hz_per_um)
+        # the table is not touched here: the caller learns once per run, from the taps that
+        # agreed (one odd ramp - a retry at full depth, plastic on the tip - must not halve it)
         try:                                       # the live view marks the contact on the trace
             t_c = next(t for (t, f), x in zip(win, xs) if x >= x_c)
             self._viz_event('tap', t=round(t_c, 4), z=round(z_c, 4), sens=round(hz_per_um, 2), amp=round(amp, 1))
@@ -1762,6 +1763,7 @@ class OznLabSensor:
             gcmd.respond_info("OznLab tap: taps disagree, clean the nozzle (offset unchanged)")
             self._job_note('tap', "taps disagreed (%.3f mm), offset not changed" % (results[-1] - results[0]))
             return
+        ss = sorted(sens); self._sens_learn(t_noz, ss[len(ss) // 2])     # the run's median, once
         if not apply:
             self._history('tap', applied=False, **tap_rec)
             gcmd.respond_info("OznLab tap: contact %.3f" % med)
@@ -5133,7 +5135,8 @@ class OznLabSensor:
         th.manual_move([None, None, max(z_now, self.tap_start_z, 3.)], 10.)
         th.manual_move([(x0 + x1) / 2., (y0 + y1) / 2., None], self.mesh_speed); th.wait_moves()
         try:
-            self._tap_once(th, self.tap_start_z, self.tap_target_z, self.tap_speed, accel)
+            _, hz_um, _ = self._tap_once(th, self.tap_start_z, self.tap_target_z, self.tap_speed, accel)
+            self._sens_learn(self._noz_temp(), hz_um)
         finally:
             self._release_tap()
             th.manual_move([None, None, max(self.tap_start_z, 3.)], 10.); th.wait_moves()
@@ -6225,7 +6228,7 @@ class OznLabHoming:
         # tap reads ~0.02 mm LOW and the following ones creep back up (0.064 -> 0.083 -> 0.089),
         # the hotend mount relaxing after being pushed. So: wait, one relax tap that is not used,
         # then kept taps until two in a row agree within 0.01 mm (max 4), mean of that pair.
-        zs = []
+        zs = []; hz_all = []
         try:
             # lift off the bed first, then let the hotend mount relax in the air
             th.manual_move([None, None, z_start], 10.); th.wait_moves()
@@ -6237,7 +6240,7 @@ class OznLabHoming:
                 z_k, hz_um, amp = oz._tap_once(th, z_start, z_target, v_soft, accel,
                                                       settle=0.3 if k == 0 else 0.15,
                                                       pre=0.3 if k == 0 else 0.25, post=0.25)
-                zs.append(z_k)
+                zs.append(z_k); hz_all.append(hz_um)
                 if len(zs) >= 3 and abs(zs[-1] - zs[-2]) <= 0.01:
                     break
         finally:
@@ -6247,6 +6250,8 @@ class OznLabHoming:
             finally:
                 oz._sync_gcode_pos()
                 if oz._tap is not None: oz._release_tap()     # a fine tap that raised left it set
+        if len(zs) >= 2 and hz_all:
+            hs = sorted(hz_all[1:] or hz_all); oz._sens_learn(oz._noz_temp(), hs[len(hs) // 2])
         return [z + delta for z in zs], hz_um
 
     @staticmethod
