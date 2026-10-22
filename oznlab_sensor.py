@@ -5,7 +5,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.11.14"
+VERSION = "0.11.15"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -716,12 +716,14 @@ class OznLabSensor:
             return None
         return dc
 
-    DC_HIGH = 28        # the chip's own pick at or above this: the coil is at the edge of normal drive
+    # normal drive at its maximum (31) or no answer: the coil needs high drive. 28-30 still works
+    # (the reference coil runs at 28 for months), switching it would only throw its table away
+    DC_HIGH = 31
     DC_LOW_HD = 6       # in high drive, a pick at or below this: normal drive would do
 
     def _auto_drive_mode(self):
         """normal or high current drive, from what the chip picks for the coil in each mode.
-        Normal drive at its top (28..31) or no answer at all: high drive, if the chip finds a
+        Normal drive at its maximum (31) or no answer at all: high drive, if the chip finds a
         drive current there. High drive at its bottom: back to normal. Applied now, kept with
         SAVE_CONFIG (high_drive, reg_drive_current)."""
         try:
@@ -738,7 +740,7 @@ class OznLabSensor:
             dc = self._measure_drive_current()
             # back to normal only with room to spare (a pick near the top would send it straight
             # back to high drive at the next start)
-            if dc is None or (want and dc >= 31) or (not want and dc >= self.DC_HIGH - 4):
+            if dc is None or (want and dc >= 31) or (not want and dc >= 27):
                 self._hd = was                       # the other mode is no better: keep this one
                 self.sensor.set_reg(ldc1612.REG_CONFIG, self.sensor.read_reg(ldc1612.REG_CONFIG))
                 logging.info("oznlab %s: drive mode kept %s (other mode gave %s)", self.name,
