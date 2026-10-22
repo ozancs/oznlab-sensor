@@ -5,7 +5,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.11.16"
+VERSION = "0.11.17"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -278,6 +278,7 @@ class OznLabSensor:
         # a babystep is what differs from it.
         self._zshift = None
         self._base_off = None
+        self._shift_by_event = False
         # pressure advance calibration (never saved - applied live per print)
         self.pa_speed = config.getfloat('pa_speed', 3.0, above=0.5, maxval=20.)     # mm/s filament
         self.pa_duration = config.getfloat('pa_duration', 1.5, minval=0.8, maxval=5.)
@@ -419,10 +420,51 @@ class OznLabSensor:
         except Exception:
             logging.exception("oznlab: could not register the live endpoint")
         self.printer.register_event_handler('klippy:connect', self._on_connect)
+        self.printer.register_event_handler('klippy:connect', self._wrap_g28)
         self.printer.register_event_handler('klippy:ready', self._on_ready)
         # a tap done since Z was last homed: OZNLAB_PRINT_START then does not tap again
         self._tapped = False
         self.printer.register_event_handler('homing:home_rails_end', self._z_homed_event)
+
+    def _wrap_g28(self):
+        """Z homed by a probe (probe:z_virtual_endstop: a BTT Eddy, say) sends no home_rails_end,
+        so what G28 must do afterwards (forget the tap, apply the tap's Z zero) happens here, around
+        G28 itself. Once per Klipper start, for every sensor."""
+        if _UPD.get('g28') is self.printer:
+            return
+        _UPD['g28'] = self.printer
+        prev = self.gcode.register_command('G28', None)
+        if prev is None:
+            return
+        printer = self.printer
+        def g28(gcmd):
+            for name, obj in printer.lookup_objects('oznlab_sensor'):
+                obj._shift_by_event = False
+            prev(gcmd)
+            axes = [a for a in 'XYZ' if gcmd.get(a, None) is not None]
+            if axes and 'Z' not in axes:
+                return
+            for name, obj in printer.lookup_objects('oznlab_sensor'):
+                try:
+                    obj._after_z_home()
+                except Exception:
+                    logging.exception("oznlab: after G28")
+        self.gcode.register_command('G28', g28, desc="Home axes (OznLab: applies the tap's Z zero afterwards)")
+
+    def _after_z_home(self):
+        if self._shift_by_event:                   # our own endstop did it in home_rails_end
+            self._shift_by_event = False
+            return
+        self._tapped = False
+        self._last_contact = None
+        shift = self._zshift
+        if not shift or abs(shift) > 1.:
+            return
+        th = self.printer.lookup_object('toolhead')
+        th.wait_moves()
+        p = th.get_position(); p[2] -= shift; th.set_position(p)
+        self._sync_gcode_pos()
+        logging.info("oznlab %s: G28 corrected Z by %.4f (the tap's zero)", self.name, shift)
 
     def _z_homed_event(self, homing_state, rails):
         try:
@@ -430,6 +472,7 @@ class OznLabSensor:
                   if st.get_name().startswith('stepper_z')]
             if zs:
                 self._tapped = False
+                self._shift_by_event = True
                 shift = self._zshift
                 if shift is None and self.homing is not None and any(
                         isinstance(es, OznLabZEndstop) for rail in rails for es, n in rail.get_endstops()):
@@ -1867,9 +1910,14 @@ class OznLabSensor:
                              "[%s] section into printer.cfg)" % (where, new, self.cfg_name))
         self.tap_adjust_z = new
         self._stage('tap_adjust_z', "%.3f" % new)
-        # the babystep moves into Z itself and the G-code offset goes back: the nozzle stays where it is
-        self._shift_z(self.printer.lookup_object('toolhead'), delta)
-        self.gcode.run_script_from_command("SET_GCODE_OFFSET Z=%.4f MOVE=0" % self._base_off)
+        if self._in_print():
+            # mid-print: the babystep stays as it is (moving Z's zero would stall the print),
+            # the next tap or G28 lands there anyway. No question about it at the end
+            self._base_off = self._gcode_off()
+        else:
+            # the babystep moves into Z itself and the G-code offset goes back: the nozzle stays where it is
+            self._shift_z(self.printer.lookup_object('toolhead'), delta)
+            self.gcode.run_script_from_command("SET_GCODE_OFFSET Z=%.4f MOVE=0" % self._base_off)
         gcmd.respond_info("OznLab: babystep %+.3f kept, tap_adjust_z %.3f - SAVE_CONFIG to keep it"
                           % (delta, new))
 

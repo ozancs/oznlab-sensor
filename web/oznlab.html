@@ -1068,7 +1068,7 @@ function drawFalls() {
   const pa = S.oz.viz && S.oz.viz.pa;
   const L = 34, R = 8, T = 8, B = 22, pw = w - L - R, ph = h - T - B;
   let lo = -0.25, hi = 1.0;
-  if (pa) for (const t of pa.trains) for (const v of t.curve) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  if (pa) for (const t of pa.trains) for (const v of (t.curve || [])) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
   const tmax = 0.3, X = s => L + s / tmax * pw, Y = v => T + (hi - v) / (hi - lo) * ph;
   g.strokeStyle = css('--rule'); g.fillStyle = css('--dim'); g.lineWidth = 1; g.beginPath();
   for (const v of [0, 0.5, 1]) { g.moveTo(L, Y(v)); g.lineTo(L + pw, Y(v)); g.fillText(v.toFixed(1), 4, Y(v) + 4); }
@@ -1083,7 +1083,7 @@ function drawFalls() {
     g.strokeStyle = best ? css('--sig') : kColor(t.K, kmin, kmax); g.lineWidth = best ? 3 : 1.5;
     g.setLineDash(t.too_much ? [4, 3] : []);
     g.beginPath();
-    t.curve.forEach((v, i) => { const s = t.start + i * t.dt; if (s > tmax) return; i ? g.lineTo(X(s), Y(v)) : g.moveTo(X(s), Y(v)); });
+    (t.curve || []).forEach((v, i) => { const s = t.start + i * t.dt; if (s > tmax) return; i ? g.lineTo(X(s), Y(v)) : g.moveTo(X(s), Y(v)); });
     g.stroke();
   }
   g.setLineDash([]);
