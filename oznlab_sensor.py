@@ -5,7 +5,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.11.15"
+VERSION = "0.11.16"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -493,8 +493,9 @@ class OznLabSensor:
         except Exception:
             pass
         b = self._sens_bin(t)
-        old = self.sens_table.get(b)
-        self.sens_table[b] = hz_um if old is None else 0.5 * (old + hz_um)
+        # the run's median of taps that agreed replaces the bin: averaging with the old value
+        # carried a stale reading (another drive, plastic on the tip) through many runs
+        self.sens_table[b] = hz_um
         # staged for SAVE_CONFIG only when it really changed (a new bin, or 15 % away from the
         # saved value), so the taps of every print do not keep the SAVE_CONFIG banner on
         saved = self._sens_saved.get(b)
@@ -1630,15 +1631,11 @@ class OznLabSensor:
         except Exception:
             sps = float(self.sensor.data_rate)
         sps = max(sps, 1.)
+        # the same push every time: the frequency does not rise in a straight line with the
+        # push (the mount stiffens), so a deeper tap reads a steeper slope and a slightly
+        # different contact. The depth once followed the sensitivity table, which made the
+        # measured slope feed back into the next tap's depth (and the table wander)
         w = self.tap_soft if soft is None else soft
-        if soft is None:
-            # a sensitive coil does not need 0.1 mm of ramp to show the contact: the window
-            # shrinks to what gives a ramp of 30 x the noise (at least 60 Hz), never under
-            # 0.04 mm. A 3 Hz/um coil then presses about 0.06 mm instead of 0.12
-            sens = self._sens_at(self._noz_temp(), safe=True)
-            if sens:
-                sig, q = self._noise_now()
-                w = min(w, max(0.04, max(60., 30. * sig, 4. * q) / sens / 1000.))
         v = max(0.15, min(speed, w * sps / 14.))
         lost = 0.01 * v + v * v / (2. * max(accel, 1.))
         return v, max(0.04, 14. * v / sps + lost + 0.02)
