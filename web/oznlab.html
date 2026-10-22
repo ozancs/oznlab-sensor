@@ -456,10 +456,10 @@ dialog.wide { max-width: 720px; width: 92vw; }
     <div class="two">
       <div class="panel">
         <h2>Z offset</h2>
-        <p class="lead">A tap measures where the nozzle meets the bed and sets the z offset from it. The sensor gets stiffer as the hotend heats, so the tap also records how many Hz one micrometre of push gives.</p>
+        <p class="lead">A tap measures where the nozzle meets the bed and makes Z 0 there, plus the squish. The G-code offset is not touched: what you see there is your babystep only. The sensor gets stiffer as the hotend heats, so the tap also records how many Hz one micrometre of push gives.</p>
         <div class="readouts" style="margin-bottom:12px">
-          <div><small>Last tap</small><b id="z_last">-</b></div>
-          <div><small>Saved offset</small><b id="z_saved">-</b></div>
+          <div><small>Last tap moved Z</small><b id="z_last">-</b></div>
+          <div><small>G28 correction</small><b id="z_saved">-</b></div>
           <div><small>Squish (tap_adjust_z)</small><b id="z_adj">-</b></div>
         </div>
         <div class="row">
@@ -476,7 +476,7 @@ dialog.wide { max-width: 720px; width: 92vw; }
     </div>
     <div class="panel">
       <div class="row"><h2 class="grow">Tap repeatability</h2><button data-run="OZNLAB_TAP SAMPLES=10 APPLY=0" data-home="1">Tap 10 times</button></div>
-      <p class="hint" style="margin:0 0 6px">Ten taps on the same spot, nothing is changed. The narrower the spread, the more the z offset can be trusted. A clean nozzle tip matters most.</p>
+      <p class="hint" style="margin:0 0 6px">Ten taps on the same spot, nothing is changed. The narrower the spread, the more the tap can be trusted. A clean nozzle tip matters most.</p>
       <div class="two" style="align-items:center">
         <canvas id="taphist" style="width:100%;height:170px;display:block" aria-label="Spread of the taps"></canvas>
         <div class="readouts"><div><small>Spread (max - min)</small><b id="tr_span">-</b></div><div><small>Standard deviation</small><b id="tr_sd">-</b></div><div><small>Allowed</small><b id="tr_tol">-</b></div></div>
@@ -585,6 +585,8 @@ function connect() {
   };
 }
 async function start() {
+  // Klipper restarted: its sample clock starts again near 0, the plots would wait for it forever
+  hist.length = 0; lastT = 0; clock = null; monHist.length = 0; monLast = 0;
   try {
     const list = await rpc('printer.objects.list');
     const names = list.objects.filter(n => n === 'oznlab_sensor' || n.startsWith('oznlab_sensor '));
@@ -604,6 +606,9 @@ async function start() {
     loadCams();
     afterRestart();
   } catch (e) {
+    if (/klippy|not ready|startup|disconnected/i.test(e.message || '')) {   // Klipper still starting
+      setKlippy('starting', false); setTimeout(() => { if (linked) start(); }, 2000); return;
+    }
     setKlippy('refused', false);
     toast('err', 'Moonraker refused the connection', (e.message || '') + ' Open this page from the printer address, e.g. http://printer/oznlab.html');
   }
@@ -658,7 +663,8 @@ new ResizeObserver(fitCam).observe($('scope').querySelector('.fig'));
 // the G-code command is used, which waits behind a running print
 let beatBusy = 0, beatGcode = false;
 async function beat() {
-  if (!sensorName || (beatBusy && Date.now() - beatBusy < 15000)) return;
+  // the G-code beat waits behind a running print: never a second one queued behind it
+  if (!sensorName || (beatBusy && (beatGcode || Date.now() - beatBusy < 15000))) return;
   beatBusy = Date.now();
   try {
     if (!beatGcode) await rpc('printer.oznlab.live', { sensor: sensorName });
@@ -696,7 +702,7 @@ function merge(st) {
   if (st.bed_mesh) renderMesh();
 }
 function setKlippy(text, ok) { $('s_klippy').textContent = text; $('dot').classList.toggle('live', ok); }
-let linked = false;
+let linked = false, sending = '';   // sending: a command between its click and Klipper
 // one band for the two things that stop everything: no Moonraker, or Klipper not ready
 function renderAlert() {
   const a = $('alert'), st = S.webhooks.state;
@@ -723,6 +729,7 @@ function lockButtons() {
     let why = '';
     if (!ready) why = 'Klipper is not ready';
     else if (r && btn.dataset.run !== 'SAVE_CONFIG') why = r + ' is running';
+    else if (sending) why = sending.split(' ')[0] + ' is being sent';
     else if (pr && !inPrint) why = 'Not during a print';
     btn.disabled = !!why;
     if (btn.dataset.title0 === undefined) btn.dataset.title0 = btn.title || '';   // its own tooltip, kept
@@ -799,19 +806,24 @@ async function preflight(cmd, opts) {
 // true: ran, false: Klipper returned an error, null: not sent (a check or the person said no)
 async function run(cmd, opts) {
   opts = opts || {};
-  if (!(await preflight(cmd, opts))) return null;
-  if (opts.confirm && !(await ask('Confirm', opts.confirm, 'Run it'))) return null;
-  conAdd(cmd, 'c');
+  // a double click: the first one is already on its way (Klipper reports it running a moment later)
+  if (sending) return null;
+  sending = cmd; lockButtons();
   try {
-    await rpc('printer.gcode.script', { script: cmd });
-    if (opts.done) toast('ok', opts.done);
-    return true;
-  } catch (e) {
-    const msg = (e.message || JSON.stringify(e)).replace(/^!!\s*/, '');
-    toast('err', cmd.split(' ')[0] + ' stopped', msg);
-    conAdd('!! ' + msg, 'e');
-    return false;
-  }
+    if (!(await preflight(cmd, opts))) return null;
+    if (opts.confirm && !(await ask('Confirm', opts.confirm, 'Run it'))) return null;
+    conAdd(cmd, 'c');
+    try {
+      await rpc('printer.gcode.script', { script: cmd });
+      if (opts.done) toast('ok', opts.done);
+      return true;
+    } catch (e) {
+      const msg = (e.message || JSON.stringify(e)).replace(/^!!\s*/, '');
+      toast('err', cmd.split(' ')[0] + ' stopped', msg);
+      conAdd('!! ' + msg, 'e');
+      return false;
+    }
+  } finally { sending = ''; lockButtons(); }
 }
 for (const b of document.querySelectorAll('[data-run]')) {
   const opts = { home: b.dataset.home, cold: b.dataset.cold, hot: b.dataset.hot, confirm: b.dataset.confirm, duringPrint: b.dataset.print };
@@ -905,7 +917,7 @@ function conAdd(text, kind) {
   while (conLines.length > 400) conLines.shift();
   const last = conLines[conLines.length - 1];
   if (last) $('conLast').textContent = last.text.slice(0, 140);
-  renderCon();
+  if ($('con').classList.contains('open')) renderCon();
   for (const c of caps) c.push(...String(text).split('\n').map(clean));
   if (caps.size && curView === 'setup') renderStepOut();
   for (const f of capWatch) f();
@@ -972,7 +984,7 @@ function renderChecks(lines) {
   if (!n) box.innerHTML = '<div class="empty">The check printed no result lines; see the console.</div>';
 }
 $('runCheck').onclick = async () => {
-  const { ok, lines } = await runCapture('OZNLAB_CHECK');
+  const { ok, lines } = await runCapture('OZNLAB_CHECK', { duringPrint: 1 });
   if (!ok) return;
   renderChecks(lines);
   const fails = lines.filter(l => /\[\s*FAIL/.test(l)).length, warns = lines.filter(l => /\[\s*WARN/.test(l)).length;
@@ -1003,13 +1015,12 @@ function renderPA() {
 }
 function renderSaved() {
   const sv = S.oz.saved || {}, tb = $('savedPa').querySelector('tbody');
-  const rows = (sv.pa_auto || []).map(p => `<tr><td>${p.filament}</td><td>${p.nozzle || 'any'}</td><td>${p.pa.toFixed(4)}</td><td>${p.temp ? p.temp + ' C' : '-'}</td></tr>`);
+  const rows = (sv.pa_auto || []).map(p => `<tr><td>${esc(p.filament)}</td><td>${esc(p.nozzle || 'any')}</td><td>${p.pa.toFixed(4)}</td><td>${p.temp ? p.temp + ' C' : '-'}</td></tr>`);
   tb.innerHTML = rows.join('') || '<tr><td colspan="4" class="empty">Nothing saved yet. Run PA auto with "Save it" on.</td></tr>';
   const sc = Object.entries(sv.pa_scale || {});
   $('savedNote').textContent = sc.length ? 'Pattern method scales: ' + sc.map(([k, v]) => k + ' ' + v).join(', ') + '. Print start uses a saved PA auto value first.' : '';
   const fils = new Set([...(sv.pa_auto || []).map(p => p.filament), ...sc.map(x => x[0]), 'PLA', 'PETG', 'ASA', 'ABS', 'TPU']);
-  $('filList').innerHTML = [...fils].map(f => `<option value="${f}">`).join('');
-  if (!$('paFil').value && S.oz.info && S.oz.info.filament) $('paFil').value = S.oz.info.filament;
+  $('filList').innerHTML = [...fils].map(f => `<option value="${esc(f)}">`).join('');
 }
 function setupCanvas(c) {
   const r = c.getBoundingClientRect(), d = window.devicePixelRatio || 1;
@@ -1050,9 +1061,8 @@ function drawLadder() {
     g.font = '600 13px ' + css('--head'); g.fillText(pa.result.toFixed(4), x - 22, y - 28);
   }
 }
-const darkUI = () => true;
 // low K blue, high K red: a sequence the eye reads without a legend
-function kColor(k, kmin, kmax) { const x = kmax > kmin ? (k - kmin) / (kmax - kmin) : 0.5; return `hsl(${225 - 215 * x}, ${darkUI() ? 75 : 70}%, ${darkUI() ? 66 : 42}%)`; }
+function kColor(k, kmin, kmax) { const x = kmax > kmin ? (k - kmin) / (kmax - kmin) : 0.5; return `hsl(${225 - 215 * x}, 75%, 66%)`; }
 function drawFalls() {
   const cv = setupCanvas($('falls')); if (!cv) return; const { g, w, h } = cv;
   const pa = S.oz.viz && S.oz.viz.pa;
@@ -1083,7 +1093,7 @@ function drawFalls() {
 function renderZ() {
   const sv = S.oz.saved || {};
   const f = (v) => v == null ? '-' : v.toFixed(3) + ' mm';
-  $('z_last').textContent = f(sv.last_tap_z); $('z_saved').textContent = f(sv.tap_z);
+  $('z_last').textContent = f(sv.last_tap_z); $('z_saved').textContent = f(sv.z_shift);
   $('z_adj').textContent = sv.tap_adjust_z == null ? '-' : sv.tap_adjust_z.toFixed(3) + ' mm';
   drawSens();
 }
@@ -1138,6 +1148,7 @@ function makeClock(t0) {
   return c;
 }
 function addSamples(live) {
+  if (live.length && live[live.length - 1][0] < lastT - 5) { hist.length = 0; lastT = 0; clock = null; }   // a new clock
   const before = lastT;
   for (const [t, f] of live) if (t > lastT) { hist.push([t, f]); lastT = t; }
   while (hist.length && hist[0][0] < lastT - 70) hist.shift();
@@ -1208,12 +1219,25 @@ function drawLive() {
   if (sm !== pts) path(pts, css('--raw'), 1);
   path(sm, css('--sig'), 2);
 }
+// the median of the raw samples between a and b: sorted by time, so a binary search instead of a
+// scan of every sample, and kept until new samples arrive (the wave asks for the same windows every frame)
+let medMemo = { v: -1, m: new Map() };
+function histMedian(a, b) {
+  if (medMemo.v !== lastT) medMemo = { v: lastT, m: new Map() };
+  const k = a + ',' + b;
+  if (medMemo.m.has(k)) return medMemo.m.get(k);
+  let lo = 0, hi = hist.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (hist[mid][0] < a) lo = mid + 1; else hi = mid; }
+  const vals = [];
+  for (let i = lo; i < hist.length && hist[i][0] <= b; i++) vals.push(hist[i][1]);
+  const r = median(vals); medMemo.m.set(k, r); return r;
+}
 function paWave(t0, t1, ref, sgn) {
   const pa = S.oz.viz && S.oz.viz.pa, cur = pa && pa.cur;
   if (!cur || !cur.ups || !cur.ups.length) return null;
   const ups = cur.ups, downs = cur.downs;
   if (downs[downs.length - 1] + 1.2 < t0) return null;
-  const val = (a, b) => median(hist.filter(p => p[0] >= a && p[0] <= b).map(p => sgn * (p[1] - ref)));
+  const val = (a, b) => { const m = histMedian(a, b); return m === null ? null : sgn * (m - ref); };
   const slows = [], fasts = [];
   for (let i = 0; i < ups.length; i++) {
     const f = val(ups[i] + 0.35, downs[i] - 0.04); if (f !== null) fasts.push(f);
@@ -1267,8 +1291,8 @@ const STEPS = [
     text: 'How hard the chip drives the coil. When it has to change, the new value shows up below: save it and this step checks it again after the restart.' },
   { n: 3, art: 'push', title: 'Does the coil feel the hotend?', cmd: 'OZNLAB_SETUP STEP=3', cold: true, count: true,
     text: 'For 25 seconds, push the cold nozzle up with a finger three times. Each push shows on the graph above and is counted here. Never touch a hot nozzle.' },
-  { n: 4, art: 'tap', title: 'Tap and z offset', cmd: 'OZNLAB_SETUP STEP=4', home: true,
-    text: 'Homes if needed, heats the nozzle to 150 C, moves over the middle of the bed and taps five times. The tip should be clean. Saving keeps the z offset.' },
+  { n: 4, art: 'tap', title: 'Tap and Z 0', cmd: 'OZNLAB_SETUP STEP=4', home: true,
+    text: 'Homes if needed, heats the nozzle to 150 C, moves over the middle of the bed and taps five times. The tip should be clean. Z 0 is then the bed plus the squish.' },
   { n: 5, art: 'pa', title: 'Pressure advance', home: true, form: true,
     text: 'Load a filament and name it as the slicer does. The nozzle heats, lifts and pulses about 20 cm of filament in the air where it is now, so move over the purge bucket first if there is one. About 2 to 4 minutes.' },
   { n: 6, art: 'home', title: 'Z homing with the nozzle', cmd: 'OZNLAB_SETUP STEP=6', home: true, optional: true,
@@ -1280,7 +1304,6 @@ const STEPS = [
 ];
 let cur = 1;
 const stepRes = {}, stepOut = {};
-let liveStep = 0;
 function stepDone(n) {
   if (stepRes[n]) return stepRes[n] === 'ok';
   return ((S.oz.setup && S.oz.setup.step) || 0) >= n;
@@ -1388,9 +1411,8 @@ function stepCmd(st) {
 async function runStep() {
   const st = STEPS[cur - 1], n = cur, cmd = stepCmd(st);
   if (!cmd) return;
-  const lines = []; stepOut[n] = lines; liveStep = n; renderStep();
+  const lines = []; stepOut[n] = lines; renderStep();
   const { ok } = await runCapture(cmd, { home: st.home, cold: st.cold }, lines);
-  liveStep = 0;
   if (ok === null) { delete stepOut[n]; renderStep(); return; }
   const fail = !ok || lines.some(l => /\[\s*FAIL/.test(l)) || (st.count && !lines.some(l => /^(TAP #|PRESS released)/.test(l)));
   // a value that only counts after the restart (the drive current): not done until it is checked again
@@ -1403,8 +1425,7 @@ async function runStep() {
 }
 $('stepRun').onclick = runStep;
 $('stepPrev').onclick = () => { if (cur > 1) { cur--; renderStep(); } };
-$('stepNext').onclick = () => { if (cur < STEPS.length) { cur++; renderStep(); } };
-$('stepSkip').onclick = () => { if (cur < STEPS.length) { cur++; renderStep(); } };
+$('stepNext').onclick = $('stepSkip').onclick = () => { if (cur < STEPS.length) { cur++; renderStep(); } };
 function pendingRows() {
   const cf = S.configfile || {}, items = cf.save_config_pending_items || {}, rows = [];
   if (!cf.save_config_pending) return rows;
@@ -1421,6 +1442,7 @@ function renderPending() {
   box.innerHTML = `<div class="savebox"><b>Waiting to be written to printer.cfg</b><div class="snip" style="margin:8px 0;border:0;padding:0;background:none">${esc(rows.join('\n'))}</div>
     <div class="row"><button class="primary" id="saveRestart">Save and restart Klipper</button><span class="hint">This page reconnects by itself and carries on.</span></div></div>`;
   $('saveRestart').onclick = async () => {
+    if (!(await preflight('SAVE_CONFIG', {}))) return;     // a restart mid-print ends the print
     try { sessionStorage.setItem('oz_after_save', JSON.stringify({ step: cur, t: Date.now() })); } catch (e) {}
     conAdd('SAVE_CONFIG', 'c');
     try { await rpc('printer.gcode.script', { script: 'SAVE_CONFIG' }); } catch (e) {}   // the restart cuts the reply
@@ -1692,13 +1714,13 @@ $('mode').onchange = () => {
 
 // ================= is everything OK? =================
 $('quick').onclick = async () => {
-  const { ok, lines } = await runCapture('OZNLAB_CHECK');
+  const { ok, lines } = await runCapture('OZNLAB_CHECK', { duringPrint: 1 });
   if (ok === null) return;
   const pick = (k) => lines.filter(l => new RegExp('\\[\\s*' + k).test(l)).map(l => l.replace(/^\s*\[\s*\w+\s*\]\s*/, ''));
   const fails = pick('FAIL'), warns = pick('WARN');
   const i = S.oz.info || {}, sv = S.oz.saved || {}, facts = [];
   if (i.noise != null) facts.push('noise ' + i.noise + ' Hz');
-  if (sv.last_tap_z != null) facts.push('z offset ' + sv.last_tap_z.toFixed(3) + ' mm');
+  if (sv.last_tap_z != null) facts.push('last tap moved Z ' + sv.last_tap_z.toFixed(3) + ' mm');
   if (i.sens) facts.push(i.sens + ' Hz/um at ' + (i.temp != null ? i.temp + ' C' : 'this temperature'));
   let kind, title;
   const cap = (x) => x.charAt(0).toUpperCase() + x.slice(1);
@@ -1715,7 +1737,7 @@ $('quick').onclick = async () => {
 
 // ================= support bundle =================
 $('bundleBtn').onclick = async () => {
-  if (!(await preflight('OZNLAB_BUNDLE', {}))) return;
+  if (!(await preflight('OZNLAB_BUNDLE', { duringPrint: 1 }))) return;
   $('bundleOut').textContent = 'Packing ...';
   try {   // this page's console goes in too: Klipper does not keep it anywhere
     const fd = new FormData();
@@ -1723,7 +1745,7 @@ $('bundleBtn').onclick = async () => {
     fd.append('file', new Blob([conLines.map(l => (l.k === 'c' ? '> ' : '') + l.text).join('\n') + '\n'], { type: 'text/plain' }), 'console.txt');
     await fetch(httpBase + '/server/files/upload', { method: 'POST', body: fd });
   } catch (e) {}
-  const ok = await run('OZNLAB_BUNDLE');
+  const ok = await run('OZNLAB_BUNDLE', { duringPrint: 1 });
   $('bundleOut').textContent = ok ? 'Packed, the download link follows in a moment.' : '';
 };
 function showBundle() {
