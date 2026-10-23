@@ -417,7 +417,7 @@ dialog.wide { max-width: 720px; width: 92vw; }
   <section class="view" id="v_pa">
     <div class="two">
       <div class="panel">
-        <h2>Measure pressure advance</h2>
+        <div class="row"><h2 class="grow">Measure pressure advance</h2><button class="ghost backSetup" style="display:none">Back to setup</button></div>
         <p class="lead">The extruder pulses slow and fast in the air while K goes up. The answer is the last K whose pressure does not dip below its new level after a speed drop. About 2 to 4 minutes and 15 to 25 cm of filament.</p>
         <div class="form">
           <label for="paFil">Filament</label><input id="paFil" type="text" list="filList" placeholder="as the slicer names it, e.g. PETG">
@@ -494,7 +494,7 @@ dialog.wide { max-width: 720px; width: 92vw; }
   <!-- MESH -->
   <section class="view" id="v_mesh">
     <div class="panel">
-      <div class="row"><h2 class="grow">Bed mesh</h2><span class="hint" id="meshInfo"></span>
+      <div class="row"><h2 class="grow">Bed mesh</h2><span class="hint" id="meshInfo"></span><button class="ghost backSetup" style="display:none">Back to setup</button>
         <button data-run="OZNLAB_MESH_SETUP">Pick the area</button>
         <button class="primary" data-run="OZNLAB_MESH" data-home="1">Measure with the nozzle</button></div>
       <canvas id="mesh" style="width:100%;height:380px;display:block" aria-label="Bed mesh"></canvas>
@@ -863,7 +863,9 @@ for (const b of document.querySelectorAll('[data-run]')) {
     } finally { capWatch.delete(draw); b.textContent = label; }
   });
 }
-for (const b of document.querySelectorAll('[data-go]')) b.addEventListener('click', () => show(b.dataset.go));
+let fromSetup = false;   // a view opened from a setup step shows a way back
+for (const b of document.querySelectorAll('[data-go]')) b.addEventListener('click', () => { fromSetup = curView === 'setup'; show(b.dataset.go); });
+for (const b of document.querySelectorAll('.backSetup')) b.onclick = () => { fromSetup = false; show('setup'); };
 
 // ================= navigation =================
 let curView = 'live', lastPs, lastWh;
@@ -873,6 +875,7 @@ function show(v) {
   for (const b of $('nav').querySelectorAll('button')) b.classList.toggle('sel', b.dataset.v === v);
   for (const s of document.querySelectorAll('.view')) s.classList.toggle('sel', s.id === 'v_' + v);
   document.body.classList.toggle('compact', v !== 'live');
+  for (const b of document.querySelectorAll('.backSetup')) b.style.display = fromSetup && v !== 'setup' ? '' : 'none';
   $('scopeTitle').textContent = v === 'pa' ? 'Sensor and speed steps' : 'Sensor';
   history.replaceState(null, '', '#' + v);
   requestAnimationFrame(redrawAll);
@@ -1393,7 +1396,7 @@ OZNLAB_MONITOR<button class="ghost" data-copy="snipStart">Copy</button></div>
     renderMacros();
   } else x.innerHTML = '';
   for (const b of x.querySelectorAll('[data-x]')) b.onclick = () => run(b.dataset.x, { home: b.dataset.home, confirm: b.dataset.confirm });
-  for (const b of x.querySelectorAll('[data-go]')) b.onclick = () => show(b.dataset.go);
+  for (const b of x.querySelectorAll('[data-go]')) b.onclick = () => { fromSetup = true; show(b.dataset.go); };
   for (const b of x.querySelectorAll('[data-copy]')) b.onclick = () => copyText($(b.dataset.copy).firstChild.textContent, b);
   renderStepOut(); renderSetupSide(); renderPending();
 }

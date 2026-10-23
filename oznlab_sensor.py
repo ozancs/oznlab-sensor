@@ -5,7 +5,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.11.21"
+VERSION = "0.11.22"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -1565,9 +1565,13 @@ class OznLabSensor:
         # anyway: a page opened while a long command runs cannot get its keep-alive through
         # the G-code queue until that command ends. The overlays are small and always there.
         busy = self._tap is not None or self._cap is not None
+        # Klipper fixes the field list of a subscription at its first query: every key must be
+        # there every time, or a page that subscribed before its first keep-alive never gets
+        # 'live' at all (seen: the plot empty until some other client re-subscribed)
         if not busy and eventtime - self._live['beat'] > 60.:
-            return {'viewer': False, 'version': VERSION, 'viz': copy.deepcopy(self._viz),
-                    'running': self._running, 'saved': self._saved_status(), **self._page_status()}
+            return {'viewer': False, 'version': VERSION, 'rate': self.sensor.data_rate, 'info': None,
+                    'running': self._running, 'saved': self._saved_status(), **self._page_status(),
+                    'mon': self._mon_status(), 'crash': None, 'live': [], 'viz': copy.deepcopy(self._viz)}
         # what the page needs to scale and label the trace: the noise and the reading step at
         # the rate it runs, and the sensitivity at this temperature (Hz per um of nozzle push)
         sig, q = self._noise_now()
