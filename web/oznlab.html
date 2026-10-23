@@ -52,6 +52,9 @@ button.primary:hover:not(:disabled) { background: var(--sig-hi); border-color: v
 button.ghost { background: transparent; border-color: transparent; box-shadow: none; color: var(--text); font-weight: 600; text-decoration: underline; text-decoration-color: var(--rule); text-underline-offset: 3px; }
 button.ghost:hover:not(:disabled) { border-color: transparent; background: transparent; text-decoration-color: var(--sig); color: var(--sig-ink); }
 button.on { color: var(--sig); text-decoration-color: var(--sig); }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.tabs button { padding: 4px 10px 3px; font-weight: 600; }
+.tabs button.sel { background: var(--sig); color: var(--on-ink); border-color: var(--sig); }
 select, input[type=text], input[type=number] { background: var(--sheet); border: 1px solid var(--rule); border-radius: 3px; padding: 5px 8px 4px; }
 :focus-visible { outline: 2px solid var(--sig); outline-offset: 2px; }
 a { color: var(--sig); }
@@ -382,7 +385,7 @@ dialog.wide { max-width: 720px; width: 92vw; }
       <div class="cards" id="cards"><div class="empty">Nothing measured yet.</div></div>
     </div>
     <div class="panel">
-      <div class="row"><h2 class="grow">Pressure advance over time</h2><select id="phFil"></select></div>
+      <div class="row"><h2 class="grow">Pressure advance over time</h2><div id="phFil" class="tabs"></div></div>
       <p class="hint" style="margin:0 0 6px">Every PA auto run of this filament. A slow climb can be a worn nozzle; a jump after a change of spool is the spool.</p>
       <canvas id="phist" style="width:100%;height:240px;display:block" aria-label="Pressure advance history"></canvas>
     </div>
@@ -1144,10 +1147,17 @@ function renderMesh() {
 }
 
 // ================= live scope =================
-const LAG = 0.35; let clock = null, flip = false, userFlip = false, paused = false;
+// the plot runs LAG seconds behind the newest sample so that the status updates (about 4 a
+// second, later when Klipper is busy with a PA burst) never catch it up. Every time they do,
+// the line would stand still and then jump; the lag then grows a step, up to 1.2 s
+let LAG = 0.5; let clock = null, flip = false, userFlip = false, paused = false;
 function makeClock(t0) {
-  const c = { t: t0, wall: performance.now(), target: t0 + LAG };
-  c.view = () => { const now = performance.now(); let v = c.t + (now - c.wall) / 1000; const lim = c.target - 0.02; if (v > lim) { v = lim; c.t = v; c.wall = now; } return v; };
+  const c = { t: t0, wall: performance.now(), target: t0 + LAG, stalls: 0 };
+  c.view = () => {
+    const now = performance.now(); let v = c.t + (now - c.wall) / 1000; const lim = c.target - 0.02;
+    if (v > lim) { v = lim; c.t = v; c.wall = now; if (++c.stalls > 60 && LAG < 1.2) { LAG += 0.1; c.stalls = 0; } }
+    return v;
+  };
   return c;
 }
 function addSamples(live) {
@@ -1598,38 +1608,55 @@ function renderCards() {
   for (const b of box.querySelectorAll('[data-fil]')) b.onclick = () => { $('paFil').value = b.dataset.fil; show('pa'); };
   renderPhSelect(fs);
 }
+// one button per measured filament, the newest run's filament chosen first
+let phSel = '';
 function renderPhSelect(fs) {
-  const names = [...new Set(H.filter(h => h.kind === 'pa_auto' && h.filament).map(h => filKey(h.filament)))].sort();
-  const sel = $('phFil'), was = sel.value;
-  sel.innerHTML = names.map(n => `<option>${esc(n)}</option>`).join('') || '<option value="">no runs yet</option>';
-  if (names.includes(was)) sel.value = was;
+  const runs = H.filter(h => h.kind === 'pa_auto' && h.filament && !h.error && h.pa != null);
+  const names = [...new Set(runs.map(h => filKey(h.filament)))].sort();
+  if (!names.includes(phSel)) phSel = runs.length ? filKey(runs[runs.length - 1].filament) : '';
+  const box = $('phFil');
+  box.innerHTML = names.map(n => `<button class="${n === phSel ? 'sel' : ''}" data-ph="${esc(n)}">${esc(n)}</button>`).join('');
+  for (const b of box.querySelectorAll('[data-ph]')) b.onclick = () => { phSel = b.dataset.ph; renderPhSelect(); };
   drawPaHist();
 }
-$('phFil').onchange = drawPaHist;
 function drawPaHist() {
   const cv = setupCanvas($('phist')); if (!cv) return; const { g, w, h } = cv;
-  const f = $('phFil').value;
+  const f = phSel;
   const runs = H.filter(x => x.kind === 'pa_auto' && filKey(x.filament) === f && !x.error && x.pa != null);
   g.fillStyle = css('--dim');
   if (!runs.length) { g.fillText('No PA auto run of this filament in the history yet.', 12, 24); return; }
-  const L = 52, R = 14, T = 12, B = 24;
-  const ta = runs[0].time, tb = Math.max(runs[runs.length - 1].time, ta + 86400);
-  const pas = runs.map(r => r.pa), hi = Math.max(...pas) * 1.15, lo = Math.max(0, Math.min(...pas) * 0.8);
+  const L = 52, R = 16, T = 14, B = 26;
+  // the time axis: a day of room on both sides, so a single run sits in the middle
+  const ta = runs[0].time - 43200, tb = Math.max(runs[runs.length - 1].time, runs[0].time) + 43200;
+  const pas = runs.map(r => r.pa), span = Math.max(0.01, (Math.max(...pas) - Math.min(...pas)) * 1.6);
+  const mid = (Math.max(...pas) + Math.min(...pas)) / 2, hi = mid + span / 2, lo = Math.max(0, mid - span / 2);
   const X = (t) => L + (t - ta) / (tb - ta) * (w - L - R), Y = (v) => T + (hi - v) / (hi - lo || 1) * (h - T - B);
-  g.strokeStyle = css('--rule'); g.beginPath();
+  g.strokeStyle = css('--rule'); g.lineWidth = 1; g.beginPath();
   const st = niceStep(hi - lo, 4);
-  for (let v = Math.ceil(lo / st) * st; v <= hi; v += st) { g.moveTo(L, Y(v)); g.lineTo(w - R, Y(v)); g.fillText(v.toFixed(3), 4, Y(v) + 4); }
+  for (let v = Math.ceil(lo / st) * st; v <= hi + 1e-9; v += st) { g.moveTo(L, Y(v)); g.lineTo(w - R, Y(v)); g.fillText(v.toFixed(3), 4, Y(v) + 4); }
   g.stroke();
-  g.fillText(new Date(ta * 1000).toLocaleDateString(), L, h - 6);
-  const lab = new Date(tb * 1000).toLocaleDateString(); g.fillText(lab, w - R - g.measureText(lab).width, h - 6);
-  const nozzles = [...new Set(runs.map(r => r.nozzle || 'any'))].sort();
-  const col = (n) => kColor(nozzles.indexOf(n), 0, Math.max(1, nozzles.length - 1));
-  for (const n of nozzles) {
-    const rs = runs.filter(r => (r.nozzle || 'any') === n);
-    g.strokeStyle = col(n); g.globalAlpha = 0.5; g.beginPath(); rs.forEach((r, i) => i ? g.lineTo(X(r.time), Y(r.pa)) : g.moveTo(X(r.time), Y(r.pa))); g.stroke(); g.globalAlpha = 1;
-    g.fillStyle = col(n); for (const r of rs) { g.beginPath(); g.arc(X(r.time), Y(r.pa), r.in_print ? 3 : 4.5, 0, 7); g.fill(); }
-    const last = rs[rs.length - 1]; g.fillText((n === 'any' ? 'any nozzle' : n + ' mm') + '  ' + last.pa.toFixed(4), Math.min(X(last.time) + 8, w - 120), Y(last.pa) - 8);
+  // one date per run day, never two labels on top of each other
+  let lastX = -1e9;
+  for (const r of runs) {
+    const x = X(r.time), lab = new Date(r.time * 1000).toLocaleDateString(), tw = g.measureText(lab).width;
+    if (x - tw / 2 < lastX + 8) continue;
+    g.fillStyle = css('--dim'); g.fillText(lab, Math.min(Math.max(x - tw / 2, L), w - R - tw), h - 7); lastX = x + tw / 2;
+    g.fillRect(x, h - B, 1, 4);
   }
+  const nozzles = [...new Set(runs.map(r => r.nozzle || 'any'))].sort();
+  const col = (n) => nozzles.length > 1 ? kColor(nozzles.indexOf(n), 0, nozzles.length - 1) : css('--sig');
+  nozzles.forEach((n, ni) => {
+    const rs = runs.filter(r => (r.nozzle || 'any') === n);
+    g.strokeStyle = col(n); g.lineWidth = 2; g.globalAlpha = 0.55; g.beginPath();
+    rs.forEach((r, i) => i ? g.lineTo(X(r.time), Y(r.pa)) : g.moveTo(X(r.time), Y(r.pa))); g.stroke(); g.globalAlpha = 1;
+    g.fillStyle = col(n);
+    for (const r of rs) { g.beginPath(); g.arc(X(r.time), Y(r.pa), r.in_print ? 3.5 : 5, 0, 7); g.fill(); }
+    // the newest value next to its dot, kept inside the plot
+    const last = rs[rs.length - 1], txt = (n === 'any' ? '' : n + ' mm  ') + last.pa.toFixed(4), tw = g.measureText(txt).width;
+    g.font = '600 12px ' + css('--font');
+    g.fillText(txt, Math.min(X(last.time) + 9, w - R - tw), Math.max(T + 10, Y(last.pa) - 9 + ni * 0));
+    g.font = '12px ' + css('--font');
+  });
 }
 
 // ================= tap repeatability =================

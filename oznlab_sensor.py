@@ -5,7 +5,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.11.17"
+VERSION = "0.11.18"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -776,7 +776,10 @@ class OznLabSensor:
             return
         try:
             if not self._hd and cur < self.DC_HIGH:
-                return
+                # 28..30 in normal drive: fine for most coils, but a coil the chip flags there
+                # (amplitude errors: the oscillation is too small) wants high drive too
+                if cur < 28 or not self._amp_flagged():
+                    return
             if self._hd and cur > self.DC_LOW_HD:
                 return
             want = not self._hd
@@ -802,6 +805,30 @@ class OznLabSensor:
             self.gcode.respond_info(msg)
         except Exception:
             logging.exception("oznlab %s: drive mode check failed", self.name)
+
+    def _amp_flagged(self, secs=0.6):
+        """True when the chip flags a good share of its samples (amplitude error) right now:
+        a short listen on the stream, nothing moves"""
+        if self._tap is not None or self._cap is not None or self._mon is not None or self._crash is not None:
+            return False
+        n = {'s': 0, 'e0': None, 'e1': 0}
+        def cb(msg):
+            n['s'] += len(msg.get('data', ()))
+            e = msg.get('errors', 0)
+            if n['e0'] is None: n['e0'] = e
+            n['e1'] = e
+            return n['on']
+        n['on'] = True
+        try:
+            self.sensor.add_client(cb)
+            self.reactor.pause(self.reactor.monotonic() + secs)
+        finally:
+            n['on'] = False
+        if n['s'] < 10 or n['e0'] is None:
+            return False
+        flagged = n['e1'] - n['e0']
+        logging.info("oznlab %s: %d of %d samples flagged by the chip", self.name, flagged, n['s'])
+        return flagged >= 0.2 * n['s']
 
     def _sens_clear(self):
         """another drive or another hotend: the old table would be wrong. True when there was one"""
@@ -5747,7 +5774,17 @@ class OznLabSensor:
                     pred = (max(nb) if nb else None)
                     try:
                         if use_trig:
-                            z, spread, taps = self._trigger_point(th, pred, self.TRIGGER_SPEED, z_target, live)
+                            try:
+                                z, spread, taps = self._trigger_point(th, pred, self.TRIGGER_SPEED, z_target, live)
+                            except self.printer.command_error as e:
+                                # the MCU trigger missed the bed here: the rest of the mesh is tapped the
+                                # slow way (the same contact, measured by the host), nothing is lost
+                                gcmd.respond_info("OznLab mesh: the trigger did not find the bed at X %.1f Y %.1f (%s) - "
+                                                  "tapping the slow way from here" % (xs[i], y, e))
+                                use_trig = False
+                                if live is not None: live['on'] = False; live = None
+                                th.manual_move([None, None, travel], 10.); th.wait_moves()
+                                z, spread, taps = self._tap_point(th, samples, pred, speed, accel)
                         else:
                             z, spread, taps = self._tap_point(th, samples, pred, speed, accel)
                     except self.printer.command_error as e:
