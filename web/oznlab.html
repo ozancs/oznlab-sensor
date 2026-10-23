@@ -670,9 +670,12 @@ async function beat() {
     if (!beatGcode) await rpc('printer.oznlab.live', { sensor: sensorName });
     else await rpc('printer.gcode.script', { script: 'OZNLAB_LIVE SENSOR=' + sensorName });
   } catch (e) {
-    if (!beatGcode && /not found|unknown|-32601/i.test((e.message || '') + (e.code || ''))) { beatGcode = true; beatBusy = 0; return beat(); }
+    // any refusal of the endpoint: say so once in the console and use the G-code command from now on
+    if (!beatGcode) { conAdd('!! live endpoint refused (' + (e.message || JSON.stringify(e)) + '), using OZNLAB_LIVE', 'e'); beatGcode = true; beatBusy = 0; return beat(); }
   }
   beatBusy = 0;
+  // the endpoint answered but nothing arrives: the G-code command is the sure way
+  if (!beatGcode) setTimeout(() => { if (!hist.length && !beatGcode) { beatGcode = true; beat(); } }, 8000);
 }
 setInterval(beat, 20000);
 
