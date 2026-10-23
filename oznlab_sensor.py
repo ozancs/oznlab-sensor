@@ -5,7 +5,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.11.18"
+VERSION = "0.11.20"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -5604,7 +5604,7 @@ class OznLabSensor:
             if ref is None:
                 return full_tap(settle, pre)
             start = min(self.tap_start_z, ref + margin)
-            target = max(self.tap_target_z, ref - depth)
+            target = max(full[1], ref - depth)
             try:
                 return one(start, target, settle, pre, v_soft)
             except self.printer.command_error as e:
@@ -5714,6 +5714,13 @@ class OznLabSensor:
         except Exception:
             accel = 100.; z_min = None
         accel = accel or 100.
+        # Z 0 is the bed plus the squish where the tap was made, so a point of the bed can sit
+        # 0.1-0.3 mm lower than that. The descent floor follows the bed: tap_target_z below the
+        # lowest contact measured so far (and below the expected contact of this point)
+        z_floor_min = z_min if z_min is not None else -1.
+        def floor_for(pred):
+            ref = min([v for v in got.values()] + [pred if pred is not None else 0.]) if got or pred is not None else -self.tap_adjust_z
+            return max(z_floor_min, min(self.tap_target_z, ref + self.tap_target_z))
         z_target = self.tap_target_z
         if z_min is not None and z_target < z_min:
             raise gcmd.error("oznlab mesh: tap_target_z %.2f is below [stepper_z] position_min %.2f"
@@ -5780,10 +5787,11 @@ class OznLabSensor:
                                           % (why, xs[i], y))
                         live['on'] = False
                         th.manual_move([None, None, travel], 10.); th.wait_moves()
-                        return self._tap_point(th, samples, pred, speed, accel)
+                        return self._tap_point(th, samples, pred, speed, accel, full=(self.tap_start_z, floor_for(pred)))
                     try:
                         if use_trig:
                             try:
+                                z_target = floor_for(pred)
                                 z, spread, taps = self._trigger_point(th, pred, self.TRIGGER_SPEED, z_target, live)
                             except self.printer.command_error as e:
                                 use_trig = False
@@ -5794,14 +5802,14 @@ class OznLabSensor:
                                 # when that disagrees the trigger is not trusted for the rest
                                 if z <= z_target + 0.02 or (pred is not None and abs(z - pred) > 0.12):
                                     th.manual_move([None, None, travel], 10.); th.wait_moves()
-                                    z2, spread2, taps2 = self._tap_point(th, samples, pred, speed, accel)
+                                    z2, spread2, taps2 = self._tap_point(th, samples, pred, speed, accel, full=(self.tap_start_z, floor_for(pred)))
                                     if abs(z2 - z) > 0.05:
                                         gcmd.respond_info("OznLab mesh: the trigger read %.3f where a tap finds %.3f at X %.1f Y %.1f - "
                                                           "tapping the slow way from here" % (z, z2, xs[i], y))
                                         use_trig = False; live['on'] = False
                                     z, spread, taps = z2, spread2, taps2
                         else:
-                            z, spread, taps = self._tap_point(th, samples, pred, speed, accel)
+                            z, spread, taps = self._tap_point(th, samples, pred, speed, accel, full=(self.tap_start_z, floor_for(pred)))
                     except self.printer.command_error as e:
                         raise gcmd.error("oznlab mesh: point X %.1f Y %.1f failed three times (%s) - "
                                          "is the bed there? tap_target_z reachable?" % (xs[i], y, e))
