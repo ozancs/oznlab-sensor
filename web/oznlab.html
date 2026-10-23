@@ -1208,6 +1208,7 @@ function drawLive() {
       g.font = '12px ' + css('--mono');
       g.fillText('status update ' + secAgo(diag.status) + ', live samples ' + secAgo(diag.liveAt) + ' (' + diag.liveN + '), keep-alive ' + secAgo(diag.beatAt) + ' ' + diag.beatRes
         + ', buffer ' + hist.length + ', clock ' + (clock ? clock.view().toFixed(1) : '-') + ' / last ' + lastT.toFixed(1), L, T + ph / 2 + 22);
+      if (S.oz.live_state) g.fillText('module: ' + S.oz.live_state, L, T + ph / 2 + 40);
     }
     return;
   }

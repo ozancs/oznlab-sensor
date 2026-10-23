@@ -5,7 +5,7 @@ from . import ldc1612
 
 # Release version. Bump it together with a git tag (v0.9.0 ...): Moonraker's update manager
 # (channel: stable) offers an update only for a new tag, and this string shows which one runs.
-VERSION = "0.11.20"
+VERSION = "0.11.21"
 _UPD = {'started': False, 'latest': None, 'printer': None}   # update check, shared by every sensor
 
 
@@ -1516,8 +1516,14 @@ class OznLabSensor:
                     z_homing=self.homing is not None, last_tap_z=self.last_tap_z)
 
     def _page_status(self):
+        L = self._live
         return {'hist': self._hist_id, 'bundle': self._bundle, 'log': self.log_on,
-                'setup': dict(step=self._setup_step, macros=dict(self._macros))}
+                'setup': dict(step=self._setup_step, macros=dict(self._macros)),
+                # the page's own diagnosis line when no samples arrive
+                'live_state': "client %s, yield %s, timer %s, beat %.0f s ago, stream %s, buf %d" % (
+                    L['idle_on'], self._live_yield, L['timer'] is not None,
+                    self.reactor.monotonic() - L['beat'] if L['beat'] > 0 else -1,
+                    getattr(getattr(self.sensor, 'batch_bulk', None), 'is_started', None), len(L['buf']))}
 
     def _mon_status(self):
         """the print view: the newest monitor points and the watch state"""
@@ -5591,12 +5597,20 @@ class OznLabSensor:
             # a full descent gets three attempts, each a little slower to settle: a single
             # missed batch or a noisy trace must not throw away minutes of taps
             last = None
+            floor = full[1]
+            try:
+                z_min = toolhead.get_kinematics().rails[2].get_range()[0]
+            except Exception:
+                z_min = floor - 1.
             for attempt in range(3):
                 try:
-                    return one(full[0], full[1], settle + 0.2 * attempt, pre + 0.1 * attempt)
+                    return one(full[0], floor, settle + 0.2 * attempt, pre + 0.1 * attempt)
                 except self.printer.command_error as e:
                     last = e
                     logging.info("oznlab mesh: full tap attempt %d failed: %s", attempt + 1, e)
+                    # the bed is lower here than the floor allowed for (a tilted bed): deeper next time
+                    if 'samples after the contact' in str(e):
+                        floor = max(z_min, floor - 0.25)
             raise last
         def tap(ref, margin, settle=0.1, pre=0.12):
             # short descent: the slow part starts just above the expected contact, the lift to
@@ -5720,7 +5734,7 @@ class OznLabSensor:
         z_floor_min = z_min if z_min is not None else -1.
         def floor_for(pred):
             ref = min([v for v in got.values()] + [pred if pred is not None else 0.]) if got or pred is not None else -self.tap_adjust_z
-            return max(z_floor_min, min(self.tap_target_z, ref + self.tap_target_z))
+            return max(z_floor_min, min(self.tap_target_z, ref + self.tap_target_z - 0.2))
         z_target = self.tap_target_z
         if z_min is not None and z_target < z_min:
             raise gcmd.error("oznlab mesh: tap_target_z %.2f is below [stepper_z] position_min %.2f"
