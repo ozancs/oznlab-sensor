@@ -5772,19 +5772,34 @@ class OznLabSensor:
                     # expected contact from measured neighbours (same row, row before)
                     nb = [got[k] for k in ((i - 1, j), (i + 1, j), (i, j - 1)) if k in got]
                     pred = (max(nb) if nb else None)
+                    def slow_from_here(why):
+                        # the rest of the mesh is tapped the slow way (the same contact, measured by
+                        # the host). The trigger's client stays subscribed and is only switched off:
+                        # its callback reads this dict, the dict must never be replaced
+                        gcmd.respond_info("OznLab mesh: %s at X %.1f Y %.1f - tapping the slow way from here"
+                                          % (why, xs[i], y))
+                        live['on'] = False
+                        th.manual_move([None, None, travel], 10.); th.wait_moves()
+                        return self._tap_point(th, samples, pred, speed, accel)
                     try:
                         if use_trig:
                             try:
                                 z, spread, taps = self._trigger_point(th, pred, self.TRIGGER_SPEED, z_target, live)
                             except self.printer.command_error as e:
-                                # the MCU trigger missed the bed here: the rest of the mesh is tapped the
-                                # slow way (the same contact, measured by the host), nothing is lost
-                                gcmd.respond_info("OznLab mesh: the trigger did not find the bed at X %.1f Y %.1f (%s) - "
-                                                  "tapping the slow way from here" % (xs[i], y, e))
                                 use_trig = False
-                                if live is not None: live['on'] = False; live = None
-                                th.manual_move([None, None, travel], 10.); th.wait_moves()
-                                z, spread, taps = self._tap_point(th, samples, pred, speed, accel)
+                                z, spread, taps = slow_from_here("the trigger did not find the bed (%s)" % e)
+                            else:
+                                # a trigger that fires late (weak signal at this spot) reads deep; a point
+                                # far from its neighbours or at the floor is checked with a slow tap, and
+                                # when that disagrees the trigger is not trusted for the rest
+                                if z <= z_target + 0.02 or (pred is not None and abs(z - pred) > 0.12):
+                                    th.manual_move([None, None, travel], 10.); th.wait_moves()
+                                    z2, spread2, taps2 = self._tap_point(th, samples, pred, speed, accel)
+                                    if abs(z2 - z) > 0.05:
+                                        gcmd.respond_info("OznLab mesh: the trigger read %.3f where a tap finds %.3f at X %.1f Y %.1f - "
+                                                          "tapping the slow way from here" % (z, z2, xs[i], y))
+                                        use_trig = False; live['on'] = False
+                                    z, spread, taps = z2, spread2, taps2
                         else:
                             z, spread, taps = self._tap_point(th, samples, pred, speed, accel)
                     except self.printer.command_error as e:

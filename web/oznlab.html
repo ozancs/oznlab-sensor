@@ -665,14 +665,20 @@ new ResizeObserver(fitCam).observe($('scope').querySelector('.fig'));
 // answered at once, also mid-print; on a module before v0.11.9 that endpoint does not exist and
 // the G-code command is used, which waits behind a running print
 let beatBusy = 0, beatGcode = false;
+// what the empty plot says when nothing arrives: when the last status update, the last live
+// samples and the last keep-alive were, and what the keep-alive answered
+const diag = { status: 0, liveAt: 0, liveN: 0, beatAt: 0, beatRes: '' };
+const secAgo = (t) => t ? Math.round((Date.now() - t) / 1000) + ' s ago' : 'never';
 async function beat() {
   // the G-code beat waits behind a running print: never a second one queued behind it
   if (!sensorName || (beatBusy && (beatGcode || Date.now() - beatBusy < 15000))) return;
   beatBusy = Date.now();
   try {
-    if (!beatGcode) await rpc('printer.oznlab.live', { sensor: sensorName });
-    else await rpc('printer.gcode.script', { script: 'OZNLAB_LIVE SENSOR=' + sensorName });
+    const r = !beatGcode ? await rpc('printer.oznlab.live', { sensor: sensorName })
+      : await rpc('printer.gcode.script', { script: 'OZNLAB_LIVE SENSOR=' + sensorName });
+    diag.beatAt = Date.now(); diag.beatRes = (beatGcode ? 'gcode ' : 'endpoint ') + JSON.stringify(r).slice(0, 60);
   } catch (e) {
+    diag.beatAt = Date.now(); diag.beatRes = 'error ' + (e.message || JSON.stringify(e)).slice(0, 80);
     // any refusal of the endpoint: say so once in the console and use the G-code command from now on
     if (!beatGcode) { conAdd('!! live endpoint refused (' + (e.message || JSON.stringify(e)) + '), using OZNLAB_LIVE', 'e'); beatGcode = true; beatBusy = 0; return beat(); }
   }
@@ -690,6 +696,7 @@ function merge(st) {
     Object.assign(S[key], st[k]);
   }
   const oz = st[objName];
+  diag.status = Date.now(); if (oz && oz.live) { diag.liveAt = Date.now(); diag.liveN = oz.live.length; }
   if (oz && oz.live && !paused) addSamples(oz.live);
   renderTop();
   if (oz) {
@@ -1197,6 +1204,11 @@ function drawLive() {
   if (pts.length < 2) {
     g.fillStyle = css('--dim'); g.font = '14px ' + css('--font');
     g.fillText(!objName ? 'Connecting to the printer ...' : 'Waiting for samples. The sensor streams during taps, PA tests, prints and while this page is open.', L, T + ph / 2);
+    if (objName) {
+      g.font = '12px ' + css('--mono');
+      g.fillText('status update ' + secAgo(diag.status) + ', live samples ' + secAgo(diag.liveAt) + ' (' + diag.liveN + '), keep-alive ' + secAgo(diag.beatAt) + ' ' + diag.beatRes
+        + ', buffer ' + hist.length + ', clock ' + (clock ? clock.view().toFixed(1) : '-') + ' / last ' + lastT.toFixed(1), L, T + ph / 2 + 22);
+    }
     return;
   }
   const info = S.oz.info || {}, um = $('unit').value === 'um' && info.sens, U = um ? 1 / info.sens : 1;
